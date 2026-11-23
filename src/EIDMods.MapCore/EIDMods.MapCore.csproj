@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Pure map math (heightfield, rasterizer, classifier, cache). NO Unity / BepInEx / Il2Cpp
+    references, so it can be unit-tested outside the game. EIDMods.Features compiles these
+    sources by link, so hot reload still loads a single DLL.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>EIDMods.MapCore</RootNamespace>
+  </PropertyGroup>
+
+</Project>

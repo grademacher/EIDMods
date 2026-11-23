@@ -18,4 +18,12 @@
     <ProjectReference Include="..\EIDMods\EIDMods.csproj" Private="false" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      Pure map math, compiled in by link (not referenced) so the hot-reloaded features stay a
+      single DLL. Unit tests live in tests/EIDMods.MapCore.Tests against the MapCore project.
+    -->
+    <Compile Include="..\EIDMods.MapCore\**\*.cs" Exclude="..\EIDMods.MapCore\obj\**;..\EIDMods.MapCore\bin\**" LinkBase="MapCore" />
+  </ItemGroup>
+
 </Project>
