@@ -26,8 +26,9 @@ Unity 6000.3 with metadata v39 is very new to the modding tools:
 - **BepInEx 6 BE ≥ 755** can read v39 metadata (older builds fail with "We support 23-31, got 39").
   Latest is **be.793** (2026-11-05).
 - An open Il2CppInterop issue ([#283](https://github.com/BepInEx/Il2CppInterop/issues/283)) reports crashes during hook
-  setup on **Unity 6000.3.15** (be.788). Our game is **6000.3.9**, which hasn't been tested. It might load fine, or
-  it might hit the same crash. **Step 1 is to find out.**
+  setup on **Unity 6000.3.15** (be.788). **On our 6000.3.9 it works** (tested 2026-11-23): interop generates, plugins
+  load, and injected MonoBehaviours run. The log still shows `Class::Init signatures have been exhausted, using a
+  substitute!`. That's harmless so far, but it's the first suspect if Harmony patches on game methods start crashing.
 - MelonLoader has open bugs for Unity 6000.3+/v39 ([#1159](https://github.com/LavaGang/MelonLoader/issues/1159),
   [#1229](https://github.com/LavaGang/MelonLoader/issues/1229)), so it's the fallback, not the default.
 
@@ -37,23 +38,26 @@ Unity 6000.3 with metadata v39 is very new to the modding tools:
    and extract it into the game folder (so `winhttp.dll` sits next to `Expedition Into Darkness.exe`).
 2. Launch the game once. The first launch takes a while because BepInEx generates `BepInEx\interop\*.dll`.
    Check `BepInEx\LogOutput.log`. If it reaches the main menu, the loader works.
-3. (Recommended) Install **UnityExplorer** (IL2CPP / BepInEx 6 build) into `BepInEx\plugins`. Use it to inspect the
-   live scene: the player object, the level geometry and its layers, and whether there's a NavMesh.
-4. Build: `dotnet build src/EIDMods`. The build copies `EIDMods.dll` into `BepInEx\plugins\EIDMods\`.
+3. Build: `dotnet build src/EIDMods`. The build copies `EIDMods.dll` into `BepInEx\plugins\EIDMods\`. If the game is
+   running, the DLL is locked, so the build only warns "Not deployed". Close the game and build again.
    If your game path differs, create `Directory.Build.props.user` with a `<GamePath>` override.
-5. In game: **M** toggles the map, **= / -** zoom. Settings are in `BepInEx\config\eidmods.core.cfg`.
+4. In game: **M** toggles the map, **= / -** zoom. Settings are in `BepInEx\config\eidmods.core.cfg`.
 
 Because this is co-op over Mirror, keep mods **client-side and read-only** where possible. Only the host is
 authoritative, so anything that changes game state would need every player to run the mod.
 
 ## Minimap approach
 
-**v1 (scaffolded):** An orthographic camera above the local player (`Mirror.NetworkClient.localPlayer`) renders into
-a RenderTexture, which is drawn in the top-right corner. The near clip plane cuts off ceilings.
+**v1 (working, verified in a dungeon 2026-11-23):** An orthographic camera above the local player renders into a
+RenderTexture, which is drawn in the top-right corner. The near clip plane cuts off ceilings.
+- **Who it follows:** `AG.Actors.Player.Local`, the game's own static for your character. If that isn't set, it falls
+  back to `Mirror.NetworkClient.localPlayer`, then to `Camera.main` (in menus). It re-checks every second.
+  Don't follow `Camera.main` in game: it's a third-person camera behind the character, so the map ends up off-center.
+- **Rotation:** "up" on the map is where the view camera looks, not where the character's body faces.
 
-Expected problems to check in-game:
-- **Darkness.** HDRP will render what the player sees, which is mostly black. Possible fixes: add an
-  `HDAdditionalCameraData` with a fixed exposure or an override, or render only certain layers with a flat material.
+Still to look at:
+- **Darkness.** HDRP renders the map with the scene's real lighting, so unlit areas show up dark. Possible fixes: add
+  an `HDAdditionalCameraData` with a fixed exposure, or render only certain layers with a flat material.
 - **HDRP cost.** A second HDRP camera is expensive. Use a lower resolution, render every N frames, and disable
   post-processing on it.
 
@@ -62,7 +66,7 @@ Expected problems to check in-game:
   Draw it once to a texture and overlay the player position. Cheap and clean.
 - **Collider slice.** Raycast or overlap the level's colliders on a grid around the player to build the walls.
 - **Fog of war.** Reveal cells as the player walks through them, so the map shows only explored areas.
-- **Teammates.** Show other `NetworkIdentity` players as markers.
+- **Teammates.** Show the other players as markers (`AG.Actors.Player.Players` lists them).
 
 ## Reverse-engineering workflow
 
@@ -70,4 +74,14 @@ Expected problems to check in-game:
   The method bodies are stubs.
 - To see the actual logic, load `GameAssembly.dll` + `GameAssembly.pdb` in **Ghidra** or **IDA**. The PDB gives real
   function names.
-- Use **UnityExplorer** at runtime to browse objects, components and fields live.
+- **`utils/MetaDump`** quickly searches the interop assemblies by name, without opening a decompiler:
+
+  ```
+  dotnet run --project utils/MetaDump -- "<game>\BepInEx\interop\Assembly-CSharp.dll" "<type regex>" ["<member regex>"]
+  ```
+
+  It prints each matching type with its base class, plus any fields, properties and methods that match the member
+  regex. For example, `"^AG\.Actors\.Player$" "(?i)local"` is how `Player.Local` was found.
+- **UnityExplorer does not work** on this Unity version (v4.13.6 tested 2026-11-23). Unity 6.3 changed scene handles
+  from `int` to a `SceneHandle` struct, and its UI bundle fails to load, so it never initializes and F7 does nothing.
+  Don't install it.
