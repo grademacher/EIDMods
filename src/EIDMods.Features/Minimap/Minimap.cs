@@ -41,7 +41,6 @@ internal sealed class MinimapFeature : IDisposable
     private int _viewVersion = -1;
     private RevealMask _reveal;
     private string _revealKey;
-    private float _markerProbeAt;
     private readonly Stopwatch _perf = new();
     private int _perfFrames;
     private double _perfAvgMs;
@@ -66,7 +65,9 @@ internal sealed class MinimapFeature : IDisposable
         _cfg = cfg;
         _baker = baker;
         _markerCfg = markerCfg;
-        _providers.Add(new EnemyMarkers(markerCfg));
+        var enemies = new EnemyMarkers(markerCfg);
+        _providers.Add(new LootMarkers(markerCfg, enemies, IsExplored));
+        _providers.Add(enemies);
         _providers.Add(new PlayerMarkers(markerCfg));
     }
 
@@ -126,13 +127,9 @@ internal sealed class MinimapFeature : IDisposable
 
         if (_view != null)
         {
-            // F4 (and TEMP: once, 3 s after a reload): what the marker providers would see.
-            if (_markerProbeAt == 0f) _markerProbeAt = Time.unscaledTime + 3f;
-            if (Input.GetKeyDown(KeyCode.F4) || (_markerProbeAt > 0f && Time.unscaledTime >= _markerProbeAt))
-            {
-                _markerProbeAt = -1f;
+            // F4: what the marker providers see (actors, players' states, loot objects).
+            if (Input.GetKeyDown(KeyCode.F4))
                 Diagnostics.MarkerProbe.Run(feet);
-            }
 
             // F5: colliders + baked/live cells around the player ("why is X missing from the map").
             if (Input.GetKeyDown(KeyCode.F5))
@@ -214,6 +211,15 @@ internal sealed class MinimapFeature : IDisposable
         _nativePixels = null;
         _grid = null;
         _view = null;
+    }
+
+    /// <summary>Loot only shows where the map is revealed (explored, or RevealFullMap).</summary>
+    private bool IsExplored(float x, float z)
+    {
+        if (_cfg.RevealFullMap.Value) return true;
+        if (_reveal == null || _grid == null) return false;
+        float cell = _grid.CellSize;
+        return _reveal.IsRevealed((int)MathF.Floor(x / cell), (int)MathF.Floor(z / cell));
     }
 
     /// <summary>Teammates, enemies and loot as dots on top of the map (under the player's own marker).</summary>

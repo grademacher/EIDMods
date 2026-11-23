@@ -127,9 +127,31 @@ as a snapshot around you. Plan and evidence: `.project-memory/research/2026-11-2
 - **Cost:** about **1.3 ms/frame** steady (compose about 0.9 ms, overlay about 0.3 ms).
 - **Accuracy:** about 90 % of random cells agree with the physics classifier. Most disagreements are physics
   artifacts (a ray that starts inside a solid falls through) or props with a Rigidbody, which the overlay covers.
-- **Debug:** F5 dumps nearby colliders plus baked-vs-live cell maps (`[Nearby]`), F6 compares baked vs physics
+- **Debug:** F4 dumps marker data (`[Markers]`), F5 dumps nearby colliders plus baked-vs-live cell maps (`[Nearby]`), F6 compares baked vs physics
   classification (`[Parity]`), F7 runs the bake probe, F8 runs `[MapDebug]`
   rays plus `[Perf]`, and F9 runs the level probe.
+
+**Markers** (`src/EIDMods.Features/Minimap/Markers`, `MapCore/Markers`): dots drawn into the map image, so they
+rotate and clip with it. Plan: `.project-memory/research/2026-11-23-minimap-markers-plan.md`.
+
+| Marker | Look | Source |
+|---|---|---|
+| Teammate | green dot; **orange** when downed; arrow on the rim when off the map | `Player.Players` minus `Player.Local`; downed = state machine `Current` is `DownedState` |
+| Enemy | red dot | live `AG.Enemies.Pawn`s in `Actor.All`, sampled at 10 Hz and interpolated |
+| Container | small yellow dot, **hidden once opened** | `LootTableContainer` (`hasBeenOpened`), `LootContainer` |
+| Corpse loot | small yellow dot | `PawnLootTableContainer` |
+| Floor item | smallest yellow dot | `SingleLootItem` |
+
+- **Settings:** `[Minimap.Markers]` holds `ShowPlayers`, `ShowEnemies`, `EnemyMode` (`near` within `EnemyRadius` 25 m
+  through walls / `lineOfSight` / `all` / `off`), `ShowContainers`, `ShowCorpseLoot`, `ShowFloorItems`,
+  `ShowOpenedLoot` and `OtherFloorMarkers` (`fade`/`hide`; markers more than 3 m above or below you). **F3** toggles
+  all markers.
+- **Loot visibility:** loot only shows in explored cells (or everywhere with `RevealFullMap`).
+- **Loot discovery:** `FindObjectsByType` costs 10–16 ms per type and can't be split across frames, so loot is found
+  once per level and when new scenes load, one type per frame. Corpse loot and floor items are re-scanned 1 s after a
+  nearby enemy dies. Opened or picked-up state is checked about 60 objects per frame.
+- **Cost:** about 0.2 ms/frame with 18 loot dots on screen in Catacomb Ruins.
+- **F4** dumps what the providers see.
 
 **v2: physics scanner** (`src/EIDMods.Features/Minimap/MapGrid.cs`). It is now the pre-bake fallback and the live
 overlay, and its rules are the classification rules for both:

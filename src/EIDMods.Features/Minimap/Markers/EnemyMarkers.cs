@@ -31,6 +31,9 @@ internal sealed class EnemyMarkers : IMarkerProvider
     private float _nextSample;
     private int _sampleId;
 
+    /// <summary>Nearby enemies seen dying so far (LootMarkers watches this to rescan for corpse loot).</summary>
+    public int Kills { get; private set; }
+
     public EnemyMarkers(MarkerConfig cfg) => _cfg = cfg;
 
     public void Update(float now, Vector3 playerPos)
@@ -53,7 +56,13 @@ internal sealed class EnemyMarkers : IMarkerProvider
             var a = actors[i];
             if (a == null) continue;
             var pawn = a.TryCast<AG.Enemies.Pawn>();
-            if (pawn == null || !pawn.IsAlive) continue;
+            if (pawn == null) continue;
+            if (!pawn.IsAlive)
+            {
+                // A tracked (nearby) enemy just died: corpse loot / drops may spawn (LootMarkers rescans).
+                if (_tracks.Remove(pawn.Pointer)) Kills++;
+                continue;
+            }
 
             var pos = pawn.transform.position;
             if (!all && (pos - playerPos).sqrMagnitude > r2) continue;
