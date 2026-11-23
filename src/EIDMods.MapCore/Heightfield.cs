@@ -20,6 +20,8 @@ public sealed class HeightfieldBuilder
     internal const int ChunkArea = ChunkCells * ChunkCells;
 
     private readonly Dictionary<long, ChunkEntries> _chunks = new();
+    private long _lastKey = long.MinValue;
+    private ChunkEntries _lastChunk;
 
     public float CellSize { get; }
     public float OriginY { get; }
@@ -48,7 +50,14 @@ public sealed class HeightfieldBuilder
     {
         if (top < bottom) (bottom, top) = (top, bottom);
         long key = Heightfield.Key(cx >> ChunkShift, cz >> ChunkShift);
-        if (!_chunks.TryGetValue(key, out var chunk)) _chunks[key] = chunk = new ChunkEntries();
+        ChunkEntries chunk;
+        if (key == _lastKey) chunk = _lastChunk;
+        else
+        {
+            if (!_chunks.TryGetValue(key, out chunk)) _chunks[key] = chunk = new ChunkEntries();
+            _lastKey = key;
+            _lastChunk = chunk;
+        }
         chunk.Add(new Entry(
             (ushort)(((cz & ChunkMask) << ChunkShift) | (cx & ChunkMask)),
             QuantiseDown(bottom), QuantiseUp(top), flags));
