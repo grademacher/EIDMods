@@ -22,6 +22,7 @@ internal static class MarkerProbe
         Try("actors", () => Actors(me));
         Try("players", () => Players(me));
         Try("loot", () => Loot(me));
+        Try("nearby loot components", () => NearbyLootComponents(me));
         log.LogInfo("[Markers] ===== end marker probe =====");
     }
 
@@ -89,6 +90,35 @@ internal static class MarkerProbe
         Scan<AG.Environment.Loot.LootContainer>(me, c => $"interactable={c.IsInteractable}");
         Scan<AG.Environment.Loot.PawnLootTableContainer>(me, c => $"interactable={c.IsInteractable}");
         Scan<AG.Environment.Loot.SingleLootItem>(me, c => $"interactable={c.IsInteractable}");
+    }
+
+    /// <summary>
+    /// Everything loot/interaction-related on objects within 3 m (any layer, triggers included), to
+    /// find where a corpse's loot really lives.
+    /// </summary>
+    private static void NearbyLootComponents(Vector3 me)
+    {
+        var cols = Physics.OverlapSphere(me, 3f, ~0, QueryTriggerInteraction.Collide);
+        var seen = new HashSet<IntPtr>();
+        Mod.Log.LogInfo($"[Markers] colliders within 3 m: {cols.Length}");
+        for (int i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            if (col == null) continue;
+            var root = col.transform.root;
+            if (!seen.Add(root.gameObject.Pointer)) continue;
+            var comps = root.GetComponentsInChildren<Component>(true);
+            var hits = new StringBuilder();
+            for (int c = 0; c < comps.Length; c++)
+            {
+                if (comps[c] == null) continue;
+                string n = comps[c].GetIl2CppType().FullName;
+                if (n.Contains("Loot") || n.Contains("Interact") || n.Contains("Inventor") || n.Contains("Ragdoll") || n.Contains("Corpse"))
+                    hits.Append($"{n} on '{comps[c].gameObject.name}' active={comps[c].gameObject.activeInHierarchy}; ");
+            }
+            if (hits.Length > 0)
+                Mod.Log.LogInfo($"[Markers]   root '{root.name}' ({LayerMask.LayerToName(root.gameObject.layer)}, dist {Vector3.Distance(me, root.position):F1}): {hits}");
+        }
     }
 
     private static void Scan<T>(Vector3 me, Func<T, string> describe) where T : Component

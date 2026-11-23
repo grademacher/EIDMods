@@ -15,16 +15,16 @@ namespace EIDMods.Features.Minimap.Markers;
 ///
 /// Discovery: FindObjectsByType costs 10-16 ms per type in one call (F4 probe, 2026-11-23) and can't
 /// be time-sliced, so it only runs once per level and when more scenes load, one type per frame.
-/// Corpse loot and drops are found with a small death watch: a second after an enemy dies, a 3 m
-/// OverlapSphere at the body finds the new loot objects (microseconds, not a scene-wide scan; final
-/// review: per-kill scans stalled the frame 20-30 ms). Opened/picked-up state is polled about 60
+/// Corpse loot and drops are found with a small death watch: after an enemy dies, its own children
+/// are searched for the corpse loot container, and a 3 m OverlapSphere at the body finds dropped
+/// items (microseconds, not a scene-wide scan; final review: per-kill scans stalled 20-30 ms). Opened/picked-up state is polled about 60
 /// objects per frame; destroyed ones are compacted away at the end of each full pass.
 /// Only explored cells show loot, unless the full map is revealed.
 /// </summary>
 internal sealed class LootMarkers : IMarkerProvider
 {
     private const int PollPerFrame = 60;
-    private const float SceneCheckInterval = 1f, KillLootDelay = 1f, DeathWatchInterval = 0.25f;
+    private const float SceneCheckInterval = 1f, DeathWatchInterval = 0.25f;
     private const float DeathWatchRadius = 80f, LootSearchRadius = 3f;
 
     private enum Source : byte { TableContainer, Container, Corpse, FloorItem }
@@ -44,11 +44,21 @@ internal sealed class LootMarkers : IMarkerProvider
     private readonly Queue<Source> _scanQueue = new();
     private readonly List<IntPtr> _dead = new();
 
-    // Death watch: live pawns near the player (last position), and bodies to search for loot.
-    private readonly Dictionary<IntPtr, Vector3> _alivePawns = new();
+    // Death watch: live pawns near the player (wrapper kept, so the body can be searched after death),
+    // and bodies waiting to be searched (retried, since the loot can appear a few seconds late).
+    private readonly Dictionary<IntPtr, AG.Enemies.Pawn> _alivePawns = new();
     private readonly HashSet<IntPtr> _seenAlive = new();
-    private readonly List<(Vector3 pos, float at)> _pendingBodies = new();
+    private readonly List<Body> _pendingBodies = new();
     private float _nextDeathWatch;
+    private static readonly float[] BodySearchRetries = { 1f, 3f, 6f }; // seconds after death
+
+    private sealed class Body
+    {
+        public AG.Enemies.Pawn Pawn;
+        public Vector3 Pos;
+        public float DiedAt;
+        public int Attempt;
+    }
 
     private string _scenePath;
     private int _sceneCount = -1, _pollIndex;
@@ -95,40 +105,73 @@ internal sealed class LootMarkers : IMarkerProvider
             if (pawn == null) continue;
             if (!pawn.IsAlive)
             {
-                if (_alivePawns.Remove(pawn.Pointer))
-                    _pendingBodies.Add((pawn.transform.position, now + KillLootDelay));
+                if (_alivePawns.Remove(pawn.Pointer)) QueueBody(pawn, now);
                 continue;
             }
             var pos = pawn.transform.position;
             if ((pos - playerPos).sqrMagnitude > r2) continue;
-            _alivePawns[pawn.Pointer] = pos;
+            _alivePawns[pawn.Pointer] = pawn;
             _seenAlive.Add(pawn.Pointer);
         }
-        // Pawns that left the list or the radius: forget them (no body search).
+        // Pawns no longer listed alive nearby: if the object is gone or dead it died (search the body),
+        // otherwise it just walked out of range (forget it).
         _dead.Clear();
         foreach (var k in _alivePawns.Keys) if (!_seenAlive.Contains(k)) _dead.Add(k);
-        foreach (var k in _dead) _alivePawns.Remove(k);
+        foreach (var k in _dead)
+        {
+            var pawn = _alivePawns[k];
+            _alivePawns.Remove(k);
+            bool died;
+            try { died = pawn == null || !pawn.IsAlive; } catch (Exception) { died = true; }
+            if (died) QueueBody(pawn, now);
+        }
     }
 
-    /// <summary>A second after a death, look for loot objects around the body (cheap overlap query).</summary>
+    private void QueueBody(AG.Enemies.Pawn pawn, float now)
+    {
+        Vector3 pos = default;
+        try { if (pawn != null) pos = pawn.transform.position; } catch (Exception) { }
+        _pendingBodies.Add(new Body { Pawn = pawn, Pos = pos, DiedAt = now });
+    }
+
+    /// <summary>
+    /// After a death, search the body for its loot. Corpse loot is a PawnLootTableContainer on a child
+    /// ("Loot Container") of the dead pawn itself (F4 probe, 2026-11-23), so look inside the pawn
+    /// (including inactive children), at 1, 3 and 6 s after death. Drops on the ground are found with
+    /// a 3 m OverlapSphere at the body.
+    /// </summary>
     private void SearchBodies(float now)
     {
         for (int b = _pendingBodies.Count - 1; b >= 0; b--)
         {
-            var (pos, at) = _pendingBodies[b];
-            if (now < at) continue;
-            _pendingBodies.RemoveAt(b);
+            var body = _pendingBodies[b];
+            if (now < body.DiedAt + BodySearchRetries[body.Attempt]) continue;
 
-            var cols = Physics.OverlapSphere(pos, LootSearchRadius, ~0, QueryTriggerInteraction.Collide);
+            bool foundCorpseLoot = false;
+            try
+            {
+                if (body.Pawn != null)
+                {
+                    body.Pos = body.Pawn.transform.position;
+                    var corpse = body.Pawn.GetComponentInChildren<AG.Environment.Loot.PawnLootTableContainer>(true);
+                    if (corpse != null) { Add(corpse, Source.Corpse); foundCorpseLoot = true; }
+                }
+            }
+            catch (Exception) { body.Pawn = null; }
+
+            var cols = Physics.OverlapSphere(body.Pos, LootSearchRadius, ~0, QueryTriggerInteraction.Collide);
             for (int i = 0; i < cols.Length; i++)
             {
                 var col = cols[i];
                 if (col == null) continue;
-                var corpse = col.GetComponentInParent<AG.Environment.Loot.PawnLootTableContainer>();
-                if (corpse != null) { Add(corpse, Source.Corpse); continue; }
                 var item = col.GetComponentInParent<AG.Environment.Loot.SingleLootItem>();
                 if (item != null) Add(item, Source.FloorItem);
+                var other = col.GetComponentInParent<AG.Environment.Loot.PawnLootTableContainer>();
+                if (other != null) { Add(other, Source.Corpse); foundCorpseLoot = true; }
             }
+
+            body.Attempt++;
+            if (foundCorpseLoot || body.Attempt >= BodySearchRetries.Length) _pendingBodies.RemoveAt(b);
         }
     }
 
@@ -220,6 +263,7 @@ internal sealed class LootMarkers : IMarkerProvider
             try
             {
                 if (e.Obj == null) { e.Gone = true; continue; }
+                if (e.Source == Source.Corpse) e.Pos = e.Obj.transform.position;
                 switch (e.Source)
                 {
                     case Source.TableContainer:
