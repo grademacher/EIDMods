@@ -87,8 +87,13 @@ public static class HeightfieldCache
             long payload = BitConverter.ToInt64(bytes, (int)(length - TrailerLength));
             if (payload != length - TrailerLength) return false;
 
-            using var gz = new GZipStream(new MemoryStream(bytes, 0, (int)payload), CompressionMode.Decompress);
-            using var r = new BinaryReader(gz, Encoding.UTF8, leaveOpen: true);
+            // Decompress in one go: BinaryReader's 4-byte reads straight off a GZipStream each go
+            // through the inflater, which made a 3M-column cache take ~22 s to read.
+            var raw = new MemoryStream();
+            using (var gz = new GZipStream(new MemoryStream(bytes, 0, (int)payload), CompressionMode.Decompress))
+                gz.CopyTo(raw);
+            raw.Position = 0;
+            using var r = new BinaryReader(raw, Encoding.UTF8, leaveOpen: true);
 
             if (!Expect(r, Magic)) return false;
             int version = r.ReadInt32();
@@ -115,8 +120,7 @@ public static class HeightfieldCache
                     builder.AddSpan(cx, cz, r.ReadSingle(), r.ReadSingle(), (SpanFlags)r.ReadByte());
             }
             if (!Expect(r, EndMark)) return false;
-            // Read to the end so the gzip footer is reached; a damaged/missing footer throws here.
-            if (gz.ReadByte() != -1) return false;
+            if (raw.Position != raw.Length) return false; // trailing junk inside the payload
 
             hf = builder.Build();
             header = new CacheHeader(version, key, cellSize, sigs);

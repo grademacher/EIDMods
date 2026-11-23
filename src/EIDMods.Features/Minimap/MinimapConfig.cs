@@ -16,6 +16,9 @@ internal class MinimapConfig
     public readonly ConfigEntry<float> SampleRadius;
     public readonly ConfigEntry<int> SampleBudget;
     public readonly ConfigEntry<float> RefreshSeconds;
+    public readonly ConfigEntry<float> BakeBudgetMs;
+    public readonly ConfigEntry<bool> RevealFullMap;
+    public readonly ConfigEntry<float> RevealRadius;
 
     public MinimapConfig(ConfigFile cfg)
     {
@@ -31,5 +34,12 @@ internal class MinimapConfig
         SampleRadius = cfg.Bind("Minimap.Sampling", "SampleRadius", 30f, "How far around the player (metres) the level is scanned.");
         SampleBudget = cfg.Bind("Minimap.Sampling", "SampleBudget", 300, "Max cells scanned per frame (each is 1-2 physics queries).");
         RefreshSeconds = cfg.Bind("Minimap.Sampling", "RefreshSeconds", 4f, "Re-scan cells older than this, to pick up doors and moved objects.");
+
+        BakeBudgetMs = cfg.Bind("Minimap.Bake", "BakeBudgetMs", 4f, "Main-thread milliseconds per frame spent collecting level geometry while baking a map.");
+        // NOTE: config entry types must come from outside the hot-reloaded features DLL. An enum
+        // declared here is a new type on every reload, while BepInEx keeps the first binding, so
+        // the second Bind throws InvalidCastException.
+        RevealFullMap = cfg.Bind("Minimap.Bake", "RevealFullMap", false, "false: only show where you've been. true: show the whole baked level.");
+        RevealRadius = cfg.Bind("Minimap.Bake", "RevealRadius", 25f, "Metres around the player that count as explored.");
     }
 }

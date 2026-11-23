@@ -79,6 +79,30 @@ public class HeightfieldCacheTests
     }
 
     [Fact]
+    [Trait("Category", "Perf")]
+    public void TryRead_ThreeMillionColumns_UnderTwoSeconds()
+    {
+        // Opt-in (EIDMODS_PERF=1): The Moor bakes to ~2.9M columns; a cache hit must be quick.
+        if (Environment.GetEnvironmentVariable("EIDMODS_PERF") != "1") return;
+
+        var b = new HeightfieldBuilder(0.5f, -1000f);
+        for (int z = 0; z < 1700; z++)
+        for (int x = 0; x < 1700; x++)
+        {
+            b.AddSpan(x, z, -1f, 0f, SpanFlags.WalkableTop);
+            if ((x + z) % 7 == 0) b.AddSpan(x, z, 2f, 5f, SpanFlags.None);
+        }
+        var hf = b.Build();
+        var bytes = Written(hf, Header());
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Assert.True(HeightfieldCache.TryRead(new MemoryStream(bytes), Key, 0.5f, out var read, out _));
+        sw.Stop();
+        Assert.Equal(hf.ColumnCount, read.ColumnCount);
+        Assert.True(sw.Elapsed.TotalSeconds < 2.0, $"read took {sw.Elapsed.TotalSeconds:F2}s ({bytes.Length / 1024} KB)");
+    }
+
+    [Fact]
     public void TryRead_OldFormatVersion_ReturnsFalse()
     {
         var bytes = Written(Sample(), Header(version: HeightfieldCache.CurrentFormat - 1));
