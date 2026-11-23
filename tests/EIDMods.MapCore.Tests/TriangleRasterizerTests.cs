@@ -179,4 +179,22 @@ public class TriangleRasterizerTests
         _out.WriteLine($"1M triangles: {sw.ElapsedMilliseconds} ms total ({rasterMs} ms rasterize, {sw.ElapsedMilliseconds - rasterMs} ms build), {hf.ColumnCount} columns");
         Assert.True(sw.Elapsed.TotalSeconds < 2.0, $"took {sw.Elapsed.TotalSeconds:F2}s");
     }
+
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void NonFiniteVertex_IsSkipped_AndDoesNotHang(float bad)
+    {
+        // Final review, Important 2: a NaN/Inf vertex made the cell loop run to int.MaxValue forever.
+        var b = NewBuilder();
+        var v = new[] { new Vector3(0, 0, 0), new Vector3(bad, 0, 0), new Vector3(0, 0, 1) };
+        var work = System.Threading.Tasks.Task.Run(() =>
+        {
+            TriangleRasterizer.RasterizeShell(b, v, new[] { 0, 1, 2 }, SpanFlags.None);
+            TriangleRasterizer.RasterizeSolid(b, v, new[] { 0, 1, 2 }, SpanFlags.None);
+        });
+        Assert.True(work.Wait(TimeSpan.FromSeconds(2)), "rasterizer hung on a non-finite vertex");
+        Assert.Equal(0, b.Build().ColumnCount);
+    }
 }

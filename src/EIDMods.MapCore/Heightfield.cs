@@ -173,8 +173,11 @@ public sealed class HeightfieldBuilder
 public sealed class Heightfield
 {
     private readonly Dictionary<long, Chunk> _chunks;
-    private long _cachedKey = long.MinValue;
-    private Chunk _cachedChunk;
+    // Last-chunk lookup cache as ONE reference, swapped atomically. The heightfield is read from
+    // several threads at once (main-thread classification + background cache write / incremental
+    // bake); two separate key/chunk fields let a reader pair one thread's key with another's chunk.
+    private sealed class LastChunk { public long Key; public Chunk Chunk; }
+    private LastChunk _last = new() { Key = long.MinValue };
 
     public float CellSize { get; }
     public float OriginY { get; }
@@ -195,13 +198,13 @@ public sealed class Heightfield
     public ReadOnlySpan<HeightSpan> GetSpans(int cx, int cz)
     {
         long key = Key(cx >> HeightfieldBuilder.ChunkShift, cz >> HeightfieldBuilder.ChunkShift);
+        var last = _last;
         Chunk chunk;
-        if (key == _cachedKey) chunk = _cachedChunk;
+        if (last.Key == key) chunk = last.Chunk;
         else
         {
             if (!_chunks.TryGetValue(key, out chunk)) return ReadOnlySpan<HeightSpan>.Empty;
-            _cachedKey = key;
-            _cachedChunk = chunk;
+            _last = new LastChunk { Key = key, Chunk = chunk };
         }
         int local = ((cz & HeightfieldBuilder.ChunkMask) << HeightfieldBuilder.ChunkShift) | (cx & HeightfieldBuilder.ChunkMask);
         return chunk.Column(local);

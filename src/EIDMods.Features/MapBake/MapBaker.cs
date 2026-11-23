@@ -24,7 +24,7 @@ internal sealed class MapBaker : IDisposable
     public enum State { Idle, LoadingCache, Collecting, Rasterizing, Ready, Failed }
 
     private const float OriginY = -1000f;        // ushort quanta at 0.05 m cover -1000..+2276 m
-    private const float RecheckSeconds = 5f;
+    private const float RecheckSeconds = 2f;   // how often to look for newly loaded sub-scenes
 
     private readonly float _cellSize;
     private readonly Func<float> _budgetMs;
@@ -37,17 +37,19 @@ internal sealed class MapBaker : IDisposable
     private bool _incremental;
     private Stopwatch _phase;
 
-    private UnityEngine.Object _player;
-    private string _key, _mapName;
+    private string _key, _mapName, _scenePath;
     private HashSet<ulong> _signatures = new();
-    private float _nextRecheck;
-    private int _sceneCount;
+    private HashSet<string> _seenScenes = new();
+    private bool _fullReconcile;
+    private float _nextRecheck, _nextBeginTry, _nextSceneCheck;
 
     public State Current { get; private set; } = State.Idle;
     public float Progress { get; private set; }
     public Heightfield Heightfield { get; private set; }
     public IHeightSampler Terrain { get; private set; }
     public string MapName => _mapName;
+    /// <summary>Cache key of the current map (map + game build), or null before a map is known.</summary>
+    public string Key => _key;
     /// <summary>Increments whenever <see cref="Heightfield"/> is replaced (views rebuild on change).</summary>
     public int Version { get; private set; }
 
@@ -59,19 +61,20 @@ internal sealed class MapBaker : IDisposable
 
     public void Update()
     {
-        var player = AG.Actors.Player.Local;
-        if (player == null)
-        {
-            if (Current != State.Idle) Reset("no local player (left level)");
-            return;
-        }
-        if (_player != null && player.Pointer != _player.Pointer) Reset("new local player (level change)");
-
         try
         {
+            // A level is identified by the active scene, not the player object: dying, spectating or
+            // respawning (player object replaced or briefly null) keeps the same map.
+            float now = Time.unscaledTime;
+            if (Current != State.Idle && now >= _nextSceneCheck)
+            {
+                _nextSceneCheck = now + 1f;
+                if (SceneManager.GetActiveScene().path != _scenePath) { Reset("active scene changed"); return; }
+            }
+
             switch (Current)
             {
-                case State.Idle: Begin(player); break;
+                case State.Idle: if (AG.Actors.Player.Local != null) Begin(); break;
                 case State.LoadingCache: PollCache(); break;
                 case State.Collecting: Collect(); break;
                 case State.Rasterizing: PollRaster(); break;
@@ -85,15 +88,18 @@ internal sealed class MapBaker : IDisposable
         }
     }
 
-    private void Begin(AG.Actors.Player player)
+    private void Begin()
     {
+        // MapKey scans all loaded objects: in scenes that aren't a known map, only retry once a second.
+        if (Time.unscaledTime < _nextBeginTry) return;
+        _nextBeginTry = Time.unscaledTime + 1f;
         if (!MapKey.TryGetCurrent(out _key, out _mapName))
         {
             _key = null;
-            return; // not a known map (menus); try again next frame
+            return;
         }
-        _player = player;
-        _sceneCount = SceneManager.sceneCount;
+        _scenePath = SceneManager.GetActiveScene().path;
+        _seenScenes = LoadedScenePaths(); // covered by the full collect, or by the cache + reconcile
         _phase = Stopwatch.StartNew();
         Current = State.LoadingCache;
         Mod.Log.LogInfo($"[Bake] map '{_mapName}' key {_key}: looking for cache");
@@ -123,9 +129,9 @@ internal sealed class MapBaker : IDisposable
             _signatures = new HashSet<ulong>(header.ColliderSignatures);
             SetReady(hf);
             Mod.Log.LogInfo($"[Bake] cache hit: {hf.ColumnCount:N0} columns, {_signatures.Count:N0} colliders, ready in {_phase.ElapsedMilliseconds} ms; managed heap {GC.GetTotalMemory(false) / (1024 * 1024):N0} MB");
-            // Sub-scenes may already have loaded more than the cache saw: check right away.
+            // The cache may predate sub-scenes/changes in this session: reconcile once, in the background.
+            _fullReconcile = true;
             _nextRecheck = 0f;
-            _sceneCount = -1;
             return;
         }
 
@@ -133,10 +139,10 @@ internal sealed class MapBaker : IDisposable
         StartCollect(incremental: false);
     }
 
-    private void StartCollect(bool incremental)
+    private void StartCollect(bool incremental, IReadOnlySet<string> scenes = null)
     {
         _incremental = incremental;
-        _collector = new GeometryCollector(incremental ? _signatures : null, _cellSize);
+        _collector = new GeometryCollector(incremental ? _signatures : null, _cellSize, scenes);
         _phase = Stopwatch.StartNew();
         if (!incremental) Current = State.Collecting;
     }
@@ -230,11 +236,31 @@ internal sealed class MapBaker : IDisposable
         if (Time.unscaledTime < _nextRecheck) return;
         _nextRecheck = Time.unscaledTime + RecheckSeconds;
 
-        int scenes = SceneManager.sceneCount;
-        if (scenes == _sceneCount) return;
-        Mod.Log.LogInfo($"[Bake] loaded scenes changed ({_sceneCount} -> {scenes}): collecting new colliders");
-        _sceneCount = scenes;
-        StartCollect(incremental: true);
+        if (_fullReconcile)
+        {
+            _fullReconcile = false;
+            Mod.Log.LogInfo("[Bake] reconciling cached map with live colliders");
+            StartCollect(incremental: true);
+            return;
+        }
+
+        var fresh = new HashSet<string>();
+        foreach (var path in LoadedScenePaths())
+            if (_seenScenes.Add(path)) fresh.Add(path);
+        if (fresh.Count == 0) return;
+        Mod.Log.LogInfo($"[Bake] {fresh.Count} new scene(s) loaded ({string.Join(", ", fresh)}): collecting their colliders");
+        StartCollect(incremental: true, scenes: fresh);
+    }
+
+    private static HashSet<string> LoadedScenePaths()
+    {
+        var paths = new HashSet<string>();
+        for (int i = 0; i < SceneManager.sceneCount; i++)
+        {
+            var scene = SceneManager.GetSceneAt(i);
+            if (scene.isLoaded) paths.Add(scene.path);
+        }
+        return paths;
     }
 
     private void SaveCache(Heightfield hf)
@@ -270,8 +296,10 @@ internal sealed class MapBaker : IDisposable
         _cacheTask = null;
         _rasterTask = null;
         _collector = null;
-        _player = null;
         _key = null;
+        _scenePath = null;
+        _seenScenes = new HashSet<string>();
+        _fullReconcile = false;
         _signatures = new HashSet<ulong>();
         Heightfield = null;
         Terrain = null;

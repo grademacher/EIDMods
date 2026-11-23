@@ -1,4 +1,6 @@
 using System.Linq;
+using System.Threading.Tasks;
+using System;
 using EIDMods.MapCore;
 using Xunit;
 
@@ -148,5 +150,28 @@ public class HeightfieldTests
         Assert.Equal(1, second.GetSpans(9, 9).Length);
         // The original is immutable.
         AssertSpan(first.GetSpans(2, 2)[0], 0f, 1f, SpanFlags.WalkableTop);
+    }
+
+    [Fact]
+    public void GetSpans_ConcurrentReadersOnDifferentChunks_SeeTheirOwnSpans()
+    {
+        // Final review, Important 1: the main thread classifies while a background task writes the
+        // cache / builds an incremental bake from the same Heightfield.
+        var b = NewBuilder();
+        b.AddSpan(0, 0, 1f, 2f, SpanFlags.None);    // chunk (0,0)
+        b.AddSpan(32, 0, 5f, 6f, SpanFlags.None);   // chunk (1,0), same local column
+        var hf = b.Build();
+
+        int bad = 0;
+        void Reader(int cx, float expected)
+        {
+            for (int i = 0; i < 3_000_000; i++)
+            {
+                var s = hf.GetSpans(cx, 0);
+                if (s.Length != 1 || Math.Abs(s[0].Bottom - expected) > 0.1f) System.Threading.Interlocked.Increment(ref bad);
+            }
+        }
+        Parallel.Invoke(() => Reader(0, 1f), () => Reader(32, 5f), () => Reader(0, 1f), () => Reader(32, 5f));
+        Assert.Equal(0, bad);
     }
 }

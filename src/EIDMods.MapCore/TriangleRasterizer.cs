@@ -77,6 +77,8 @@ public static class TriangleRasterizer
         }
     }
 
+    private static bool IsFinite(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
+
     private static bool IsWalkable(Vector3 a, Vector3 b, Vector3 c)
     {
         var n = Vector3.Cross(b - a, c - a);
@@ -95,6 +97,9 @@ public static class TriangleRasterizer
     /// </summary>
     private static void ForEachCell<TEmit>(float cs, Vector3 a, Vector3 b, Vector3 c, ref TEmit emit) where TEmit : struct, ICellEmitter
     {
+        // A NaN/Inf vertex would make the cell range overflow into an endless loop: skip the triangle.
+        if (!IsFinite(a) || !IsFinite(b) || !IsFinite(c)) return;
+
         Span<Vector3> tri = stackalloc Vector3[3] { a, b, c };
         Span<Vector3> row = stackalloc Vector3[MaxPoly];
         Span<Vector3> cell = stackalloc Vector3[MaxPoly];

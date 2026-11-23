@@ -35,6 +35,7 @@ internal sealed class MinimapFeature : IDisposable
     private BakedMapView _view;
     private int _viewVersion = -1;
     private RevealMask _reveal;
+    private string _revealKey;
     private readonly Stopwatch _perf = new();
     private int _perfFrames;
     private double _perfAvgMs;
@@ -69,10 +70,10 @@ internal sealed class MinimapFeature : IDisposable
             var found = FindLocalPlayer(out _targetIsPlayer);
             if (found != _target)
             {
+                // New player object (level start, respawn): restart the live scan, but keep the baked
+                // view and the explored area, which belong to the map (MapBaker/Key), not the body.
                 _target = found;
                 _grid = null;
-                _view = null;
-                _reveal = null;
                 _ref.Reset();
                 if (_target != null)
                     Mod.Log.LogInfo($"Minimap tracking '{_target.name}' ({(_targetIsPlayer ? "local player" : "camera fallback")}).");
@@ -94,7 +95,11 @@ internal sealed class MinimapFeature : IDisposable
 
         var feet = _target.position;
         _ref.Update(feet.y);
-        _reveal ??= new RevealMask(cell);
+        if (_reveal == null || _revealKey != _baker.Key)
+        {
+            _reveal = new RevealMask(cell);
+            _revealKey = _baker.Key;
+        }
         _reveal.Reveal(feet, _cfg.RevealRadius.Value);
 
         // Baked map (re)built whenever the baker publishes a new heightfield (first bake, incremental).

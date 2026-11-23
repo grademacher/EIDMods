@@ -41,11 +41,21 @@ internal sealed class CollectedGeometry
 internal sealed class GeometryCollector
 {
     private const long MaxProbeCells = 40_000;
+    /// <summary>
+    /// Boxes/meshes bigger than this (500 m × 500 m at 0.5 m cells) are skipped: a level-sized
+    /// safety floor or water plane would cost hundreds of MB of spans for nothing useful.
+    /// </summary>
+    private const long MaxSolidCells = 1_000_000;
 
     private readonly IReadOnlySet<ulong> _skip;
     private readonly float _cellSize;
     private readonly Dictionary<int, (NVec[] verts, int[] idx)> _meshCache = new();
-    private Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<Object> _colliders;
+    private readonly IReadOnlySet<string> _scenePaths;
+    // Either the raw FindObjectsByType array (cast lazily, per item: casting 75k up front was a
+    // ~300 ms hitch) or the colliders of specific scenes.
+    private Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<Object> _all;
+    private List<Collider> _colliders;
+    private int _count = -1;
     private int _next;
 
     // Resumable state for probing one large collider across several steps.
@@ -55,15 +65,20 @@ internal sealed class GeometryCollector
     private SpanFlags _probeFlags;
 
     public CollectedGeometry Result { get; } = new();
-    public float Progress => _colliders == null || _colliders.Length == 0 ? 0f : (float)_next / _colliders.Length;
+    public float Progress => _count <= 0 ? 0f : (float)_next / _count;
     public double MaxStepMs { get; private set; }
     public double TotalMs { get; private set; }
     public double SnapshotMs { get; private set; }
 
-    public GeometryCollector(IReadOnlySet<ulong> skip, float cellSize)
+    /// <param name="scenePaths">
+    /// Only collect from these loaded scenes (incremental bakes after sub-scenes stream in);
+    /// null = every collider in the game.
+    /// </param>
+    public GeometryCollector(IReadOnlySet<ulong> skip, float cellSize, IReadOnlySet<string> scenePaths = null)
     {
         _skip = skip ?? new HashSet<ulong>();
         _cellSize = cellSize;
+        _scenePaths = scenePaths;
     }
 
     /// <summary>Does up to <paramref name="budgetMs"/> of work. Returns true when everything is collected.</summary>
@@ -72,26 +87,27 @@ internal sealed class GeometryCollector
         var sw = Stopwatch.StartNew();
         try
         {
-            if (_colliders == null)
+            if (_count < 0)
             {
                 Snapshot();
                 SnapshotMs = sw.Elapsed.TotalMilliseconds;
-                return _colliders.Length == 0;
+                return _count == 0;
             }
 
             while (sw.Elapsed.TotalMilliseconds < budgetMs)
             {
                 if (_probe != null) { ContinueProbe(sw, budgetMs); continue; }
-                if (_next >= _colliders.Length) return true;
-                Process(_colliders[_next++]?.TryCast<Collider>());
+                if (_next >= _count) return true;
+                int i = _next++;
+                Process(_all != null ? _all[i]?.TryCast<Collider>() : _colliders[i]);
             }
-            return _next >= _colliders.Length && _probe == null;
+            return _next >= _count && _probe == null;
         }
         finally
         {
             double ms = sw.Elapsed.TotalMilliseconds;
             TotalMs += ms;
-            if (_colliders != null && ms > MaxStepMs) MaxStepMs = ms;
+            if (_count >= 0 && ms > MaxStepMs) MaxStepMs = ms;
         }
     }
 
@@ -101,7 +117,24 @@ internal sealed class GeometryCollector
     /// </summary>
     private void Snapshot()
     {
-        _colliders = Object.FindObjectsByType(Il2CppType.Of<Collider>(), FindObjectsSortMode.None);
+        if (_scenePaths == null)
+        {
+            _all = Object.FindObjectsByType(Il2CppType.Of<Collider>(), FindObjectsSortMode.None);
+            _count = _all.Length;
+            return;
+        }
+
+        _colliders = new List<Collider>();
+        // Incremental: only the newly loaded scenes' colliders, so the cost scales with what streamed in.
+        for (int s = 0; s < UnityEngine.SceneManagement.SceneManager.sceneCount; s++)
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(s);
+            if (!scene.isLoaded || !_scenePaths.Contains(scene.path)) continue;
+            foreach (var root in scene.GetRootGameObjects())
+                foreach (var c in root.GetComponentsInChildren<Collider>())
+                    _colliders.Add(c);
+        }
+        _count = _colliders.Count;
     }
 
     private void Process(Collider c)
@@ -116,6 +149,14 @@ internal sealed class GeometryCollector
         Result.Colliders++;
 
         var flags = c.gameObject.layer == 9 ? SpanFlags.FloorOnly : SpanFlags.None;
+
+        var bounds = c.bounds;
+        long footprint = FootprintCells(bounds);
+        if (footprint > MaxSolidCells)
+        {
+            Mod.Log.LogInfo($"[Bake] skipping huge collider '{c.name}' ({c.GetIl2CppType().Name}): {footprint:N0} footprint cells");
+            return;
+        }
 
         var box = c.TryCast<BoxCollider>();
         if (box != null)
@@ -172,7 +213,7 @@ internal sealed class GeometryCollector
 
         // Huge generic colliders (whole-level blockers, kill volumes that aren't triggers, ...) would
         // cost millions of raycasts; skip them and say so.
-        long cells = (long)(_probeCx1 - _probeCx0 + 1) * (_probeCz1 - _probeCz0 + 1);
+        long cells = FootprintCells(_probeBounds);
         if (cells > MaxProbeCells)
         {
             Mod.Log.LogInfo($"[Bake] skipping unreadable collider '{c.name}' ({c.GetIl2CppType().Name}): {cells:N0} footprint cells");
@@ -202,6 +243,12 @@ internal sealed class GeometryCollector
             if (++_probeCx > _probeCx1) { _probeCx = _probeCx0; _probeCz++; }
         }
         _probe = null;
+    }
+
+    private long FootprintCells(Bounds b)
+    {
+        double w = b.size.x / _cellSize + 1, d = b.size.z / _cellSize + 1;
+        return double.IsFinite(w) && double.IsFinite(d) ? (long)Math.Min(w * d, long.MaxValue / 2) : long.MaxValue;
     }
 
     // ---- conversions ------------------------------------------------------------------------------
