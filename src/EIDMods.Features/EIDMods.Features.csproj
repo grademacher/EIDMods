@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    All mod features live here. Hot-reloadable: build, and the loader picks it up in game
+    (automatically on file change, or press F10). Deployed OUTSIDE BepInEx\plugins so the
+    chainloader doesn't scan or lock it.
+  -->
+  <Import Project="..\GameReferences.props" />
+
+  <PropertyGroup>
+    <AssemblyName>EIDMods.Features</AssemblyName>
+    <RootNamespace>EIDMods.Features</RootNamespace>
+    <DeployDir>$(BepInExPath)\EIDMods</DeployDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The contract (IFeatureModule / FeatureContext) lives in the loader. -->
+    <ProjectReference Include="..\EIDMods\EIDMods.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

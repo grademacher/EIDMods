@@ -1,35 +1,32 @@
+using System.IO;
 using BepInEx;
-using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
-using EIDMods.Minimap;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 
 namespace EIDMods;
 
+/// <summary>
+/// Loader plugin. Keep this small and stable: changes here need a game restart.
+/// Feature code lives in EIDMods.Features and is hot-reloaded by <see cref="FeatureHost"/>.
+/// </summary>
 [BepInPlugin(Guid, Name, Version)]
 public class Plugin : BasePlugin
 {
     public const string Guid = "eidmods.core";
     public const string Name = "EIDMods";
-    public const string Version = "0.1.0";
-
-    internal static ManualLogSource Logger;
-    internal static MinimapConfig MinimapConfig;
+    public const string Version = "0.2.0";
 
     public override void Load()
     {
-        Logger = Log;
-        MinimapConfig = new MinimapConfig(Config);
-
-        // Managed MonoBehaviours must be registered with IL2CPP before they can be added to GameObjects.
-        ClassInjector.RegisterTypeInIl2Cpp<MinimapController>();
+        ClassInjector.RegisterTypeInIl2Cpp<HostBehaviour>();
 
         var host = new GameObject("EIDMods_Host");
         Object.DontDestroyOnLoad(host);
         host.hideFlags = HideFlags.HideAndDontSave;
-        host.AddComponent<MinimapController>();
+        host.AddComponent<HostBehaviour>();
 
-        Logger.LogInfo($"{Name} {Version} loaded.");
+        Log.LogInfo($"{Name} loader {Version} loaded.");
+        FeatureHost.Init(Log, Config, host, Path.Combine(Paths.BepInExRootPath, "EIDMods"));
     }
 }

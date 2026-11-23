@@ -38,13 +38,38 @@ Unity 6000.3 with metadata v39 is very new to the modding tools:
    and extract it into the game folder (so `winhttp.dll` sits next to `Expedition Into Darkness.exe`).
 2. Launch the game once. The first launch takes a while because BepInEx generates `BepInEx\interop\*.dll`.
    Check `BepInEx\LogOutput.log`. If it reaches the main menu, the loader works.
-3. Build: `dotnet build src/EIDMods`. The build copies `EIDMods.dll` into `BepInEx\plugins\EIDMods\`. If the game is
-   running, the DLL is locked, so the build only warns "Not deployed". Close the game and build again.
-   If your game path differs, create `Directory.Build.props.user` with a `<GamePath>` override.
+3. Build: `dotnet build EIDMods.sln -c Release`. This deploys the loader to `BepInEx\plugins\EIDMods\` and the
+   features to `BepInEx\EIDMods\` (see "Hot reload" below). If your game path differs, create
+   `Directory.Build.props.user` with a `<GamePath>` override.
 4. In game: **M** toggles the map, **= / -** zoom. Settings are in `BepInEx\config\eidmods.core.cfg`.
 
 Because this is co-op over Mirror, keep mods **client-side and read-only** where possible. Only the host is
 authoritative, so anything that changes game state would need every player to run the mod.
+
+## Hot reload (project layout)
+
+The mod is split so feature changes don't need a game restart:
+
+| Project | Deployed to | Reloadable? |
+|---|---|---|
+| `src/EIDMods`: the **loader**, the only BepInEx plugin. It owns the one injected MonoBehaviour (`HostBehaviour`) and passes Update/LateUpdate/OnGUI on to the features. | `BepInEx\plugins\EIDMods\` | No. The game locks it, so changes need a restart. Keep it small. |
+| `src/EIDMods.Features`: **all mod features** (minimap, probe, ...). | `BepInEx\EIDMods\` (outside `plugins` so BepInEx doesn't scan it) | **Yes** |
+
+Workflow: edit a feature, then run `dotnet build src/EIDMods.Features -c Release`. The loader sees the new DLL and
+reloads it within about a second. **F10** reloads by hand. Both are configurable in `BepInEx\config\eidmods.core.cfg`
+(`[HotReload]`). The log shows `[HotReload] Loaded features #N (...)`.
+
+How it works and its rules (see `src/EIDMods/IFeatureModule.cs`):
+- The loader reads the DLL (and its pdb, for line numbers) **into memory** and loads it into a fresh
+  `AssemblyLoadContext`, so the file is never locked. Old copies stay in memory, a few hundred KB per reload.
+- Feature code **must not** call `ClassInjector.RegisterTypeInIl2Cpp`, because injected types can't be re-registered.
+  Use the forwarded `Update`/`LateUpdate`/`OnGUI` instead.
+- `Unload()` must destroy everything it created (GameObjects, textures). Harmony patches go through
+  `FeatureContext.Harmony`, which the loader unpatches on reload.
+- If feature code throws during a frame, the features are **paused**, not crashed. The error is logged once, and the
+  next reload resumes them.
+- Deploy compares file hashes, so a rebuild with no real change doesn't touch the deployed DLLs. If the loader really
+  changed while the game is running, the build warns "Not deployed": close the game and build again.
 
 ## Minimap approach
 

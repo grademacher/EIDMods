@@ -1,7 +1,7 @@
 using BepInEx.Configuration;
 using UnityEngine;
 
-namespace EIDMods.Minimap;
+namespace EIDMods.Features.Minimap;
 
 internal class MinimapConfig
 {

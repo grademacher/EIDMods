@@ -1,0 +1,62 @@
+<Project>
+  <!--
+    Game + BepInEx references shared by every project in src/.
+    These only exist after BepInEx is installed in the game folder AND the game has been
+    launched once (BepInEx generates BepInEx\interop on first run).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="$(BepInExPath)\core\BepInEx.Core.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\core\BepInEx.Unity.IL2CPP.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\core\Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\core\Il2CppInterop.Common.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\core\0Harmony.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\interop\*.dll" Private="false" />
+  </ItemGroup>
+
+  <Target Name="CheckBepInEx" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(BepInExPath)\interop\Assembly-CSharp.dll')"
+           Text="Interop assemblies not found in $(BepInExPath)\interop. Install BepInEx 6 IL2CPP into the game folder and launch the game once (see README)." />
+  </Target>
+
+  <!--
+    Copy the build output to $(DeployDir). The running game locks the loader DLL, so a failed
+    copy is a warning, not an error.
+  -->
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(DeployDir)' != ''">
+    <MakeDir Directories="$(DeployDir)" />
+    <!--
+      Builds are deterministic, so compare content hashes rather than timestamps: a recompile with
+      no real change (e.g. after editing this file) leaves the deployed DLL alone instead of
+      tripping over the game's file lock.
+    -->
+    <GetFileHash Files="$(TargetPath)">
+      <Output TaskParameter="Hash" PropertyName="_EidSrcHash" />
+    </GetFileHash>
+    <GetFileHash Files="$(DeployDir)\$(TargetFileName)" Condition="Exists('$(DeployDir)\$(TargetFileName)')">
+      <Output TaskParameter="Hash" PropertyName="_EidDstHash" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_EidUnchanged>false</_EidUnchanged>
+      <_EidUnchanged Condition="'$(_EidSrcHash)' == '$(_EidDstHash)'">true</_EidUnchanged>
+    </PropertyGroup>
+
+    <!-- The DLL alone decides success; the pdb only follows if the DLL went through. -->
+    <Copy Condition="!$(_EidUnchanged)" SourceFiles="$(TargetPath)" DestinationFolder="$(DeployDir)" Retries="0" ContinueOnError="WarnAndContinue">
+      <Output TaskParameter="CopiedFiles" ItemName="_EidDeployedDll" />
+    </Copy>
+    <Copy Condition="'@(_EidDeployedDll)' != '' And Exists('$(TargetDir)$(TargetName).pdb')"
+          SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(DeployDir)" Retries="0" ContinueOnError="WarnAndContinue" />
+    <Message Condition="$(_EidUnchanged)" Importance="high" Text="$(TargetFileName) unchanged, already deployed." />
+    <Message Condition="'@(_EidDeployedDll)' != ''" Importance="high" Text="Deployed $(TargetFileName) -> $(DeployDir)" />
+    <Warning Condition="!$(_EidUnchanged) And '@(_EidDeployedDll)' == ''" Text="Not deployed: $(TargetFileName) is locked, probably by the running game. $(DeployLockedHint)" />
+  </Target>
+</Project>
