@@ -17,7 +17,7 @@ public sealed class FeatureModule : IFeatureModule
         context.Config.Reload();
         var cfg = new MinimapConfig(context.Config);
         _baker = new MapBaker(UnityEngine.Mathf.Clamp(cfg.CellSize.Value, 0.1f, 4f), () => cfg.BakeBudgetMs.Value);
-        _minimap = new MinimapFeature(cfg, _baker);
+        _minimap = new MinimapFeature(cfg, new Minimap.Markers.MarkerConfig(context.Config), _baker);
         Mod.Log.LogInfo($"Features #{context.Generation} up (minimap, map baker).");
     }
 

@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using EIDMods.Features.Minimap.Markers;
+using EIDMods.MapCore.Markers;
 using EIDMods.Features.MapBake;
 using EIDMods.MapCore;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
@@ -42,7 +46,12 @@ internal sealed class MinimapFeature : IDisposable
     private int _perfFrames;
     private double _perfAvgMs;
     private int _perfLoggedBaked, _perfLoggedScan;
-    private readonly Stopwatch _tView = new(), _tOverlay = new(), _tUpload = new();
+    private readonly Stopwatch _tView = new(), _tOverlay = new(), _tUpload = new(), _tMarkers = new();
+
+    // Markers: drawn in this order (later on top): loot, enemies, teammates.
+    private readonly MarkerConfig _markerCfg;
+    private readonly List<IMarkerProvider> _providers = new();
+    private readonly List<MapMarker> _markers = new();
     private string _perfDetail = "";
     private Transform _target;
     private bool _targetIsPlayer;
@@ -52,10 +61,13 @@ internal sealed class MinimapFeature : IDisposable
     private readonly Color32[] _pixels = new Color32[TexSize * TexSize];
     private Il2CppStructArray<Color32> _nativePixels;
 
-    public MinimapFeature(MinimapConfig cfg, MapBaker baker)
+    public MinimapFeature(MinimapConfig cfg, MarkerConfig markerCfg, MapBaker baker)
     {
         _cfg = cfg;
         _baker = baker;
+        _markerCfg = markerCfg;
+        _providers.Add(new EnemyMarkers(markerCfg));
+        _providers.Add(new PlayerMarkers(markerCfg));
     }
 
     public void Update()
@@ -143,6 +155,15 @@ internal sealed class MinimapFeature : IDisposable
         {
             _grid.Sample(feet, _ref.Value, _cfg.SampleRadius.Value, Math.Max(1, _cfg.SampleBudget.Value), _cfg.RefreshSeconds.Value);
         }
+
+        if (Input.GetKeyDown(_markerCfg.ToggleKey.Value)) _markerCfg.Enabled.Value = !_markerCfg.Enabled.Value;
+        if (_markerCfg.Enabled.Value)
+        {
+            _tMarkers.Start();
+            float now = Time.unscaledTime;
+            foreach (var p in _providers) p.Update(now, feet);
+            _tMarkers.Stop();
+        }
         _perf.Stop();
     }
 
@@ -157,8 +178,9 @@ internal sealed class MinimapFeature : IDisposable
         {
             _perfAvgMs = _perf.Elapsed.TotalMilliseconds / _perfFrames;
             _perfDetail = $"view {_tView.Elapsed.TotalMilliseconds / _perfFrames:F2}, overlay {_tOverlay.Elapsed.TotalMilliseconds / _perfFrames:F2}, " +
+                          $"markers {_tMarkers.Elapsed.TotalMilliseconds / _perfFrames:F2} ({_markers.Count}), " +
                           $"upload {_tUpload.Elapsed.TotalMilliseconds / _perfFrames:F2} ms";
-            _perf.Reset(); _tView.Reset(); _tOverlay.Reset(); _tUpload.Reset();
+            _perf.Reset(); _tView.Reset(); _tOverlay.Reset(); _tUpload.Reset(); _tMarkers.Reset();
             _perfFrames = 0;
 
             // Log the cost for the first few windows per mode automatically (F8 logs it on demand).
@@ -192,6 +214,26 @@ internal sealed class MinimapFeature : IDisposable
         _nativePixels = null;
         _grid = null;
         _view = null;
+    }
+
+    /// <summary>Teammates, enemies and loot as dots on top of the map (under the player's own marker).</summary>
+    private void StampMarkers(Vector3 feet, float radius, float yawDeg)
+    {
+        _markers.Clear();
+        if (!_markerCfg.Enabled.Value) return;
+        _tMarkers.Start();
+        float now = Time.unscaledTime;
+        foreach (var p in _providers) p.Collect(now, _markers);
+
+        var proj = new MarkerProjector(TexSize, radius, feet.x, feet.z, yawDeg, _ref.Value,
+            floorBand: 3f, hideOtherFloors: _markerCfg.OtherFloorMarkers.Value == "hide");
+        var span = MemoryMarshal.Cast<Color32, Rgba>(_pixels.AsSpan());
+        foreach (var m in _markers)
+        {
+            bool teammate = m.Kind is MarkerKind.Teammate or MarkerKind.TeammateDowned;
+            if (proj.TryProject(m, clampToRim: teammate, out var pm)) MarkerStamp.Draw(span, TexSize, pm, m.Kind);
+        }
+        _tMarkers.Stop();
     }
 
     /// <summary>Builds the round, rotated map image from the grid and uploads it.</summary>
@@ -245,6 +287,7 @@ internal sealed class MinimapFeature : IDisposable
             }
         }
 
+        StampMarkers(feet, radius, yawDeg);
         DrawMarker(_target.eulerAngles.y - yawDeg);
         _tUpload.Start();
         Upload();
