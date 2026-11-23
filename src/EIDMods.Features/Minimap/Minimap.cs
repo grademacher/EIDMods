@@ -37,6 +37,7 @@ internal sealed class MinimapFeature : IDisposable
     private int _viewVersion = -1;
     private RevealMask _reveal;
     private string _revealKey;
+    private float _markerProbeAt;
     private readonly Stopwatch _perf = new();
     private int _perfFrames;
     private double _perfAvgMs;
@@ -113,6 +114,14 @@ internal sealed class MinimapFeature : IDisposable
 
         if (_view != null)
         {
+            // F4 (and TEMP: once, 3 s after a reload): what the marker providers would see.
+            if (_markerProbeAt == 0f) _markerProbeAt = Time.unscaledTime + 3f;
+            if (Input.GetKeyDown(KeyCode.F4) || (_markerProbeAt > 0f && Time.unscaledTime >= _markerProbeAt))
+            {
+                _markerProbeAt = -1f;
+                Diagnostics.MarkerProbe.Run(feet);
+            }
+
             // F5: colliders + baked/live cells around the player ("why is X missing from the map").
             if (Input.GetKeyDown(KeyCode.F5))
                 Diagnostics.NearbyDump.Run(feet, _ref.Value, _baker.Heightfield, _baker.Terrain, cell);
