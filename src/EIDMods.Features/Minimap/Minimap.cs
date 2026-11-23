@@ -143,7 +143,9 @@ internal sealed class MinimapFeature : IDisposable
         {
             // F4: what the marker providers see (actors, players' states, loot objects).
             if (Input.GetKeyDown(KeyCode.F4))
+            {
                 Diagnostics.MarkerProbe.Run(feet);
+            }
 
             // F5: colliders + baked/live cells around the player ("why is X missing from the map").
             if (Input.GetKeyDown(KeyCode.F5))

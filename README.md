@@ -144,8 +144,13 @@ rotate and clip with it. Plan: `.project-memory/research/2026-11-23-minimap-mark
 
 - **Settings:** `[Minimap.Markers]` holds `ShowPlayers`, `ShowEnemies`, `EnemyMode` (`near` within `EnemyRadius` 25 m
   through walls / `lineOfSight` / `all` / `off`), `ShowContainers`, `ShowCorpseLoot`, `ShowFloorItems`,
-  `ShowOpenedLoot` and `OtherFloorMarkers` (`fade`/`hide`; markers more than 3 m above or below you). **F3** toggles
-  all markers.
+  `ShowOpenedLoot` and `OtherFloorMarkers` (`fade`/`hide`, for enemies more than 3 m above or below you). **F3**
+  toggles all markers.
+- **Floors and distance:**
+  - **Teammates** always show, on any floor and at any distance, with arrows at the rim.
+  - **Loot** more than 2.5 m above or below you is always hidden. Faded loot from other floors looked like loot
+    inside walls.
+  - **Enemy and loot dots** near the rim are dropped rather than drawn over it.
 - **Loot visibility:** loot only shows in explored cells (or everywhere with `RevealFullMap`).
 - **Loot discovery:** `FindObjectsByType` costs 10–16 ms per type and can't be split across frames, so loot is found
   once per level and when new scenes load, one type per frame. Corpse loot and floor items are re-scanned 1 s after a

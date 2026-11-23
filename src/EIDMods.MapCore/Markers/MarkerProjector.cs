@@ -10,9 +10,13 @@ namespace EIDMods.MapCore.Markers;
 /// </summary>
 public sealed class MarkerProjector
 {
-    private const float RimInset = 4f;    // clamped markers sit this many px inside the rim
-    private const float OnMapLimit = 3f;  // markers closer than this to the rim count as off-map
+    // A radius-3 dot + outline (or a rim arrow's 3 px tip) needs this much room inside the 2.5 px rim:
+    // dots closer to the rim are dropped (teammates become rim arrows) instead of drawing over it.
+    private const float RimInset = 8f;    // clamped markers sit this many px inside the rim
+    private const float OnMapLimit = 8f;  // markers closer than this to the rim count as off-map
     private const float OtherFloorAlpha = 0.35f;
+    /// <summary>Loot further than this above/below the reference is on another floor: always hidden.</summary>
+    public const float LootFloorBand = 2.5f;
 
     private readonly float _half, _pxPerMetre, _px, _pz, _sin, _cos, _refY, _floorBand;
     private readonly bool _hideOtherFloors;
@@ -37,10 +41,23 @@ public sealed class MarkerProjector
     {
         p = default;
         float alpha = 1f;
-        if (MathF.Abs(m.Y - _refY) > _floorBand)
+        float dyFloor = MathF.Abs(m.Y - _refY);
+        switch (m.Kind)
         {
-            if (_hideOtherFloors) return false;
-            alpha = OtherFloorAlpha;
+            case MarkerKind.Teammate:
+            case MarkerKind.TeammateDowned:
+                break; // always visible, any floor or distance (user, 2026-11-23)
+            case MarkerKind.Enemy:
+                if (dyFloor > _floorBand)
+                {
+                    if (_hideOtherFloors) return false;
+                    alpha = OtherFloorAlpha;
+                }
+                break;
+            default:
+                // Loot on another floor showed up inside walls of this floor: hide it outright.
+                if (dyFloor > LootFloorBand) return false;
+                break;
         }
 
         float dx = m.X - _px, dz = m.Z - _pz;

@@ -34,6 +34,6 @@ internal sealed class MarkerConfig
         ShowFloorItems = cfg.Bind(s, "ShowFloorItems", true, "Single items lying on the ground: small yellow dots.");
         ShowOpenedLoot = cfg.Bind(s, "ShowOpenedLoot", false, "Keep opened containers on the map (faded) instead of hiding them.");
         OtherFloorMarkers = cfg.Bind(s, "OtherFloorMarkers", "fade",
-            new ConfigDescription("Markers more than 3 m above/below you: fade or hide.", new AcceptableValueList<string>("fade", "hide")));
+            new ConfigDescription("Enemies more than 3 m above/below you: fade or hide. (Teammates always show; loot on other floors is always hidden.)", new AcceptableValueList<string>("fade", "hide")));
     }
 }

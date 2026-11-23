@@ -49,33 +49,63 @@ public class MarkerProjectorTests
     }
 
     [Fact]
-    public void ClampedTeammate_SitsOnRim_PointingTheRightWay()
+    public void ClampedTeammate_SitsInsideRim_PointingTheRightWay()
     {
-        // Review Focus 3: teammate 100 m to the +x side, camera looking along +z: rim arrow on the right.
+        // Teammate 100 m to the +x side, camera looking along +z: rim arrow on the right, kept far
+        // enough inside the 128 px rim that the arrow (3 px tip) doesn't draw over it.
         Assert.True(At().TryProject(new MapMarker(200f, 0f, 50f, MarkerKind.Teammate), true, out var p));
         Assert.True(p.OnRim);
-        Assert.InRange(p.Px, 128 + 118, 128 + 124);   // 4 px inside the 128 px rim
+        Assert.InRange(p.Px, 128 + 116, 128 + 121);
         Assert.InRange(p.Py, 126, 130);
         Assert.InRange(p.RimAngleDeg, 89f, 91f);        // 0 = up, clockwise
 
         // Same teammate with the camera turned to look along +x: now straight up.
         Assert.True(At(yaw: 90f).TryProject(new MapMarker(200f, 0f, 50f, MarkerKind.Teammate), true, out var q));
-        Assert.InRange(q.Py, 128 + 118, 128 + 124);
+        Assert.InRange(q.Py, 128 + 116, 128 + 121);
         Assert.InRange(q.RimAngleDeg, -1f, 1f);
     }
 
     [Fact]
-    public void OtherFloor_Faded_OrHidden()
+    public void DotNearTheRim_IsDropped_InsteadOfDrawingOverIt()
     {
-        // Review Focus 2: a teammate 5 m directly above, on another floor.
-        var above = new MapMarker(100f, 5f, 52f, MarkerKind.Teammate);
-        Assert.True(At().TryProject(above, true, out var p));
-        Assert.Equal(0.35f, p.Alpha, 3);
-        Assert.False(At(hide: true).TryProject(above, true, out _));
+        // User feedback: dots bleeding over the rim. A radius-3 dot + outline needs ~8 px of room.
+        Assert.True(At().TryProject(new MapMarker(100f, 0f, 50f + 18.0f, MarkerKind.Enemy), false, out _));   // 115 px
+        Assert.False(At().TryProject(new MapMarker(100f, 0f, 50f + 18.9f, MarkerKind.Enemy), false, out _));  // 121 px
+    }
 
-        var sameFloor = new MapMarker(100f, 2.5f, 52f, MarkerKind.Teammate);
-        Assert.True(At(hide: true).TryProject(sameFloor, true, out var s));
-        Assert.Equal(1f, s.Alpha);
+    [Fact]
+    public void Enemy_OtherFloor_FadedOrHidden_PerSetting()
+    {
+        var above = new MapMarker(100f, 5f, 52f, MarkerKind.Enemy);
+        Assert.True(At().TryProject(above, false, out var p));
+        Assert.Equal(0.35f, p.Alpha, 3);
+        Assert.False(At(hide: true).TryProject(above, false, out _));
+    }
+
+    [Fact]
+    public void Teammate_AnyFloor_AlwaysFullyVisible()
+    {
+        // User feedback: teammate dots/arrows always visible, no matter the floor or distance.
+        var above = new MapMarker(100f, 12f, 52f, MarkerKind.TeammateDowned);
+        Assert.True(At(hide: true).TryProject(above, true, out var p));
+        Assert.Equal(1f, p.Alpha);
+        var farBelow = new MapMarker(400f, -30f, 50f, MarkerKind.Teammate);
+        Assert.True(At(hide: true).TryProject(farBelow, true, out var q));
+        Assert.True(q.OnRim);
+        Assert.Equal(1f, q.Alpha);
+    }
+
+    [Theory]
+    [InlineData(MarkerKind.Container)]
+    [InlineData(MarkerKind.CorpseLoot)]
+    [InlineData(MarkerKind.FloorItem)]
+    public void Loot_OtherFloor_AlwaysHidden_EvenInFadeMode(MarkerKind kind)
+    {
+        // User feedback: loot from another floor showed up inside walls; hide it instead of fading.
+        Assert.False(At(hide: false).TryProject(new MapMarker(100f, -2.8f, 52f, kind), false, out _));
+        Assert.False(At(hide: false).TryProject(new MapMarker(100f, 2.8f, 52f, kind), false, out _));
+        Assert.True(At(hide: false).TryProject(new MapMarker(100f, 1.8f, 52f, kind), false, out var shelf));
+        Assert.Equal(1f, shelf.Alpha);
     }
 
     [Fact]
