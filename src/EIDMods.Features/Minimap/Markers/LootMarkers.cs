@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using EIDMods.MapCore;
 using EIDMods.MapCore.Markers;
 using Il2CppInterop.Runtime;
 using UnityEngine;
@@ -13,15 +14,18 @@ namespace EIDMods.Features.Minimap.Markers;
 /// (PawnLootTableContainer) and floor items (SingleLootItem).
 ///
 /// Discovery: FindObjectsByType costs 10-16 ms per type in one call (F4 probe, 2026-11-23) and can't
-/// be time-sliced, so instead of the plan's periodic rescan the objects are found once per level and
-/// again when more scenes load, one type per frame. Corpse loot and floor items are also rescanned
-/// a second after a nearby enemy dies. Opened/picked-up state is polled about 60 objects per frame.
+/// be time-sliced, so it only runs once per level and when more scenes load, one type per frame.
+/// Corpse loot and drops are found with a small death watch: a second after an enemy dies, a 3 m
+/// OverlapSphere at the body finds the new loot objects (microseconds, not a scene-wide scan; final
+/// review: per-kill scans stalled the frame 20-30 ms). Opened/picked-up state is polled about 60
+/// objects per frame; destroyed ones are compacted away at the end of each full pass.
 /// Only explored cells show loot, unless the full map is revealed.
 /// </summary>
 internal sealed class LootMarkers : IMarkerProvider
 {
     private const int PollPerFrame = 60;
-    private const float SceneCheckInterval = 1f, KillRescanDelay = 1f;
+    private const float SceneCheckInterval = 1f, KillLootDelay = 1f, DeathWatchInterval = 0.25f;
+    private const float DeathWatchRadius = 80f, LootSearchRadius = 3f;
 
     private enum Source : byte { TableContainer, Container, Corpse, FloorItem }
 
@@ -34,22 +38,26 @@ internal sealed class LootMarkers : IMarkerProvider
     }
 
     private readonly MarkerConfig _cfg;
-    private readonly EnemyMarkers _enemies;
     private readonly Func<float, float, bool> _isExplored;
     private readonly Dictionary<IntPtr, Entry> _entries = new();
     private readonly List<Entry> _list = new();
     private readonly Queue<Source> _scanQueue = new();
     private readonly List<IntPtr> _dead = new();
 
+    // Death watch: live pawns near the player (last position), and bodies to search for loot.
+    private readonly Dictionary<IntPtr, Vector3> _alivePawns = new();
+    private readonly HashSet<IntPtr> _seenAlive = new();
+    private readonly List<(Vector3 pos, float at)> _pendingBodies = new();
+    private float _nextDeathWatch;
+
     private string _scenePath;
-    private int _sceneCount = -1, _kills, _pollIndex;
-    private float _nextSceneCheck, _killRescanAt = -1f;
+    private int _sceneCount = -1, _pollIndex;
+    private float _nextSceneCheck;
 
     /// <param name="isExplored">(worldX, worldZ) → whether that spot may show loot (explored, or full map).</param>
-    public LootMarkers(MarkerConfig cfg, EnemyMarkers enemies, Func<float, float, bool> isExplored)
+    public LootMarkers(MarkerConfig cfg, Func<float, float, bool> isExplored)
     {
         _cfg = cfg;
-        _enemies = enemies;
         _isExplored = isExplored;
     }
 
@@ -64,16 +72,72 @@ internal sealed class LootMarkers : IMarkerProvider
             if (count != _sceneCount) { _sceneCount = count; QueueAll(); }
         }
 
-        if (_enemies.Kills != _kills) { _kills = _enemies.Kills; _killRescanAt = now + KillRescanDelay; }
-        if (_killRescanAt > 0f && now >= _killRescanAt)
-        {
-            _killRescanAt = -1f;
-            _scanQueue.Enqueue(Source.Corpse);
-            _scanQueue.Enqueue(Source.FloorItem);
-        }
+        if (_cfg.ShowCorpseLoot.Value || _cfg.ShowFloorItems.Value) WatchDeaths(now, playerPos);
+        SearchBodies(now);
 
         if (_scanQueue.Count > 0) Scan(_scanQueue.Dequeue());
         Poll();
+    }
+
+    /// <summary>Notes where nearby pawns die (independent of the enemy-marker settings).</summary>
+    private void WatchDeaths(float now, Vector3 playerPos)
+    {
+        if (now < _nextDeathWatch) return;
+        _nextDeathWatch = now + DeathWatchInterval;
+        float r2 = DeathWatchRadius * DeathWatchRadius;
+
+        _seenAlive.Clear();
+        var actors = AG.Actors.Actor.All;
+        int n = actors?.Count ?? 0;
+        for (int i = 0; i < n; i++)
+        {
+            var pawn = actors[i]?.TryCast<AG.Enemies.Pawn>();
+            if (pawn == null) continue;
+            if (!pawn.IsAlive)
+            {
+                if (_alivePawns.Remove(pawn.Pointer))
+                    _pendingBodies.Add((pawn.transform.position, now + KillLootDelay));
+                continue;
+            }
+            var pos = pawn.transform.position;
+            if ((pos - playerPos).sqrMagnitude > r2) continue;
+            _alivePawns[pawn.Pointer] = pos;
+            _seenAlive.Add(pawn.Pointer);
+        }
+        // Pawns that left the list or the radius: forget them (no body search).
+        _dead.Clear();
+        foreach (var k in _alivePawns.Keys) if (!_seenAlive.Contains(k)) _dead.Add(k);
+        foreach (var k in _dead) _alivePawns.Remove(k);
+    }
+
+    /// <summary>A second after a death, look for loot objects around the body (cheap overlap query).</summary>
+    private void SearchBodies(float now)
+    {
+        for (int b = _pendingBodies.Count - 1; b >= 0; b--)
+        {
+            var (pos, at) = _pendingBodies[b];
+            if (now < at) continue;
+            _pendingBodies.RemoveAt(b);
+
+            var cols = Physics.OverlapSphere(pos, LootSearchRadius, ~0, QueryTriggerInteraction.Collide);
+            for (int i = 0; i < cols.Length; i++)
+            {
+                var col = cols[i];
+                if (col == null) continue;
+                var corpse = col.GetComponentInParent<AG.Environment.Loot.PawnLootTableContainer>();
+                if (corpse != null) { Add(corpse, Source.Corpse); continue; }
+                var item = col.GetComponentInParent<AG.Environment.Loot.SingleLootItem>();
+                if (item != null) Add(item, Source.FloorItem);
+            }
+        }
+    }
+
+    private void Add(Component c, Source source)
+    {
+        if (_entries.ContainsKey(c.Pointer)) return;
+        var e = new Entry { Obj = c, Source = source, Pos = c.transform.position };
+        _entries[c.Pointer] = e;
+        _list.Add(e);
     }
 
     public void Collect(float now, List<MapMarker> into)
@@ -111,7 +175,8 @@ internal sealed class LootMarkers : IMarkerProvider
         _scanQueue.Clear();
         _pollIndex = 0;
         _sceneCount = -1;
-        _killRescanAt = -1f;
+        _alivePawns.Clear();
+        _pendingBodies.Clear();
     }
 
     private void QueueAll()
@@ -135,21 +200,22 @@ internal sealed class LootMarkers : IMarkerProvider
         for (int i = 0; i < found.Length; i++)
         {
             var c = found[i]?.TryCast<Component>();
-            if (c == null || _entries.ContainsKey(c.Pointer)) continue;
-            var e = new Entry { Obj = c, Source = source, Pos = c.transform.position };
-            _entries[c.Pointer] = e;
-            _list.Add(e);
+            if (c != null) Add(c, source);
         }
     }
 
-    /// <summary>Checks a slice of the entries each frame: destroyed → gone; opened / no longer interactable → opened.</summary>
+    /// <summary>
+    /// Checks a slice of the entries each frame: destroyed → gone; opened / no longer interactable →
+    /// opened. At the end of each full pass, gone entries are compacted away.
+    /// </summary>
     private void Poll()
     {
         int n = Math.Min(PollPerFrame, _list.Count);
+        bool passDone = false;
         for (int k = 0; k < n; k++)
         {
-            if (_pollIndex >= _list.Count) _pollIndex = 0;
-            var e = _list[_pollIndex++];
+            var e = _list[RoundRobin.Next(ref _pollIndex, _list.Count, out bool completed)];
+            passDone |= completed;
             if (e.Gone) continue;
             try
             {
@@ -169,16 +235,12 @@ internal sealed class LootMarkers : IMarkerProvider
             catch (Exception) { e.Gone = true; }
         }
 
-        // Compact occasionally so destroyed objects don't accumulate.
-        if (_pollIndex == 0 && _list.Count > 0)
-        {
-            _dead.Clear();
-            foreach (var kv in _entries) if (kv.Value.Gone) _dead.Add(kv.Key);
-            if (_dead.Count > 0)
-            {
-                foreach (var k in _dead) _entries.Remove(k);
-                _list.RemoveAll(x => x.Gone);
-            }
-        }
+        if (!passDone) return;
+        _dead.Clear();
+        foreach (var kv in _entries) if (kv.Value.Gone) _dead.Add(kv.Key);
+        if (_dead.Count == 0) return;
+        foreach (var k in _dead) _entries.Remove(k);
+        _list.RemoveAll(x => x.Gone);
+        _pollIndex = 0;
     }
 }

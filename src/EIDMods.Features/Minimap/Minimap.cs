@@ -51,6 +51,21 @@ internal sealed class MinimapFeature : IDisposable
     private readonly MarkerConfig _markerCfg;
     private readonly List<IMarkerProvider> _providers = new();
     private readonly List<MapMarker> _markers = new();
+    private readonly bool[] _providerFailed = new bool[3];
+
+    /// <summary>
+    /// Runs one provider call; an exception disables only that provider (logged once) until the next
+    /// reload, instead of pausing all features (the loader pauses everything on an uncaught throw).
+    /// </summary>
+    private void Guard(int i, string what, Action call)
+    {
+        try { call(); }
+        catch (Exception e)
+        {
+            _providerFailed[i] = true;
+            Mod.Log.LogError($"[Markers] {_providers[i].GetType().Name}.{what} threw; disabled until reload: {e}");
+        }
+    }
     private string _perfDetail = "";
     private Transform _target;
     private bool _targetIsPlayer;
@@ -65,9 +80,8 @@ internal sealed class MinimapFeature : IDisposable
         _cfg = cfg;
         _baker = baker;
         _markerCfg = markerCfg;
-        var enemies = new EnemyMarkers(markerCfg);
-        _providers.Add(new LootMarkers(markerCfg, enemies, IsExplored));
-        _providers.Add(enemies);
+        _providers.Add(new LootMarkers(markerCfg, IsExplored));
+        _providers.Add(new EnemyMarkers(markerCfg));
         _providers.Add(new PlayerMarkers(markerCfg));
     }
 
@@ -158,7 +172,8 @@ internal sealed class MinimapFeature : IDisposable
         {
             _tMarkers.Start();
             float now = Time.unscaledTime;
-            foreach (var p in _providers) p.Update(now, feet);
+            for (int i = 0; i < _providers.Count; i++)
+                if (!_providerFailed[i]) Guard(i, "Update", () => _providers[i].Update(now, feet));
             _tMarkers.Stop();
         }
         _perf.Stop();
@@ -229,7 +244,8 @@ internal sealed class MinimapFeature : IDisposable
         if (!_markerCfg.Enabled.Value) return;
         _tMarkers.Start();
         float now = Time.unscaledTime;
-        foreach (var p in _providers) p.Collect(now, _markers);
+        for (int i = 0; i < _providers.Count; i++)
+            if (!_providerFailed[i]) Guard(i, "Collect", () => _providers[i].Collect(now, _markers));
 
         var proj = new MarkerProjector(TexSize, radius, feet.x, feet.z, yawDeg, _ref.Value,
             floorBand: 3f, hideOtherFloors: _markerCfg.OtherFloorMarkers.Value == "hide");
