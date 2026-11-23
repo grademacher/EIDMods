@@ -6,13 +6,13 @@ using EIDMods.MapCore;
 namespace EIDMods.Features.Minimap;
 
 /// <summary>
-/// Explored-area map built from physics colliders (no cameras, no lighting).
+/// Map cells classified live with physics queries (no cameras, no lighting). Before a level's bake
+/// is ready this is the whole minimap; afterwards it runs near the player only, as an overlay that
+/// corrects the baked map (doors, destruction).
 ///
 /// The world is split into square cells (CellSize metres). Each cell is classified (wall, obstacle,
-/// step up, floor, void) relative to a reference height (<see cref="ReferenceY"/>). The reference
-/// follows the player's feet with hysteresis: it only moves once they've climbed/dropped more than
-/// RefHysteresis. Classifying against the raw feet height made borderline cells flip between wall
-/// and floor with every small bob of the player's height.
+/// step up, floor, void) relative to the reference height passed to <see cref="Sample"/>
+/// (see ReferenceHeight: the player's feet with 1 m hysteresis).
 ///
 /// Raw classifications are kept per cell; what's drawn is a despeckled "display" colour, rebuilt
 /// per chunk when cells in or next to it change (isolated solid cells read as floor, floor cells
@@ -33,15 +33,6 @@ internal sealed class MapGrid
     // What can make a cell a wall/obstacle: same, minus "Small" props (rocks, bones, clutter),
     // which were the main source of single-cell noise.
     public static readonly int SolidMask = FloorMask & ~(1 << 9);
-
-    private const float RefHysteresis = 1.0f;
-
-    public static readonly Color32 Wall = new(222, 212, 192, 255);
-    public static readonly Color32 Obstacle = new(138, 128, 112, 240);
-    private static readonly Color32 FloorLevel = new(78, 72, 64, 235);
-    private static readonly Color32 FloorUp = new(118, 110, 97, 240);
-    private static readonly Color32 FloorDown = new(40, 37, 34, 235);
-    private static readonly Color32 Void = new(8, 8, 10, 225);
 
     private sealed class Chunk
     {
@@ -65,7 +56,7 @@ internal sealed class MapGrid
 
     public float CellSize { get; }
     public int ChunkCount => _chunks.Count;
-    /// <summary>Height everything is classified against (player feet, with hysteresis).</summary>
+    /// <summary>Reference height of the last <see cref="Sample"/> call (see ReferenceHeight).</summary>
     public float ReferenceY { get; private set; } = float.NaN;
 
     public MapGrid(float cellSize) => CellSize = cellSize;
@@ -79,22 +70,19 @@ internal sealed class MapGrid
 
     /// <summary>
     /// Samples up to <paramref name="budget"/> cells around <paramref name="feet"/>, nearest first,
-    /// then rebuilds the display colours of chunks that changed. Returns how many cells were sampled.
+    /// classified against <paramref name="refY"/>, then rebuilds the display colours of chunks that
+    /// changed. <paramref name="onClassified"/> sees every freshly classified cell (the baked view
+    /// uses it as a live overlay). Returns how many cells were sampled.
     /// </summary>
-    public int Sample(Vector3 feet, float radius, int budget, float refreshSeconds)
+    public int Sample(Vector3 feet, float refY, float radius, int budget, float refreshSeconds,
+        Action<int, int, CellKind, float> onClassified = null)
     {
         if (!Mathf.Approximately(radius, _offsetsRadius)) BuildOffsets(radius);
 
         var center = new Vector2Int(Mathf.FloorToInt(feet.x / CellSize), Mathf.FloorToInt(feet.z / CellSize));
         if (center != _lastCenter) { _lastCenter = center; _cursor = 0; } // moved: restart from nearest
 
-        // Only follow the player's height once they've clearly changed level (stairs, ramps, floors).
-        if (float.IsNaN(ReferenceY) || Mathf.Abs(feet.y - ReferenceY) > RefHysteresis)
-        {
-            ReferenceY = feet.y;
-            _cursor = 0;
-        }
-        float refY = ReferenceY;
+        if (refY != ReferenceY) { ReferenceY = refY; _cursor = 0; } // new floor: restart from nearest
 
         float now = Time.unscaledTime;
         int sampled = 0, scanned = 0, maxScan = Math.Min(_offsets.Length, 6000);
@@ -115,10 +103,11 @@ internal sealed class MapGrid
 
             float x = (cx + 0.5f) * CellSize, z = (cz + 0.5f) * CellSize;
             var kind = ClassifyKind(x, z, refY, out float dy);
-            var color = ColorFor(kind, dy);
+            var color = MapPalette.ColorFor(kind, dy);
             chunk.SampledRefY[i] = refY;
             chunk.SampledAt[i] = now;
             sampled++;
+            onClassified?.Invoke(cx, cz, kind, dy);
 
             if (chunk.Kind[i] == kind && chunk.Raw[i].Equals(color)) continue; // unchanged: nothing to redraw
             chunk.Kind[i] = kind;
@@ -128,23 +117,6 @@ internal sealed class MapGrid
 
         RebuildDirty();
         return sampled;
-    }
-
-    private static Color32 ColorFor(CellKind kind, float dy)
-    {
-        switch (kind)
-        {
-            case CellKind.Wall: return Wall;
-            case CellKind.Obstacle: return Obstacle;
-            case CellKind.StepUp: return FloorUp;
-            case CellKind.Void: return Void;
-        }
-        // Floor: one flat colour within ±0.5 m (uneven ground banded into noise otherwise), then shade
-        // by height; a drop of more than 1.5 m reads as a lower floor.
-        if (dy > 0.5f) return Lerp(FloorLevel, FloorUp, (dy - 0.5f) / 0.5f);
-        if (dy >= -0.5f) return FloorLevel;
-        if (dy > -1.5f) return Lerp(FloorLevel, FloorDown, (-dy - 0.5f) * 0.5f);
-        return Lerp(FloorDown, Void, Mathf.InverseLerp(-1.5f, -8f, dy));
     }
 
     /// <summary>What's at world (x, z) for someone standing at feetY. dy = floor height - feetY.</summary>
@@ -278,8 +250,8 @@ internal sealed class MapGrid
                     _ => dy < -1.5f ? 'v' : dy < -0.3f ? '-' : dy > 0.3f ? '+' : '.',
                 });
                 var col = Get(Mathf.FloorToInt(p.x / CellSize), Mathf.FloorToInt(p.z / CellSize));
-                shown.Append(col.a == 0 ? '?' : col.Equals(Wall) ? '#' : col.Equals(Obstacle) ? 'o'
-                    : col.Equals(FloorUp) ? '^' : col.Equals(Void) ? '_' : '.');
+                shown.Append(col.a == 0 ? '?' : col.Equals(MapPalette.Wall) ? '#' : col.Equals(MapPalette.Obstacle) ? 'o'
+                    : col.Equals(MapPalette.FloorUp) ? '^' : col.Equals(MapPalette.Void) ? '_' : '.');
             }
             log.LogInfo("[MapDebug] " + a.ToString().PadLeft(3) + $"deg live  |{live}|");
             log.LogInfo($"[MapDebug]        shown |{shown}|");
@@ -305,7 +277,6 @@ internal sealed class MapGrid
         return chunk;
     }
 
-    private static Color32 Lerp(Color32 a, Color32 b, float t) => Color32.Lerp(a, b, Mathf.Clamp01(t));
 
     private void BuildOffsets(float radius)
     {

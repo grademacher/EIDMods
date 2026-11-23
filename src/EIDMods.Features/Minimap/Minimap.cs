@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using EIDMods.Features.MapBake;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Mirror;
 using UnityEngine;
@@ -22,9 +24,23 @@ internal sealed class MinimapFeature : IDisposable
     private static readonly Color32 Marker = new(255, 255, 255, 255);
     private static readonly Color32 Clear = new(0, 0, 0, 0);
 
-    private readonly MinimapConfig _cfg;
+    private const float OverlayRadius = 10f, OverlayRefreshSeconds = 2f, ViewBudgetMs = 2f;
+    private const int OverlayBudget = 20, PerfFrames = 300;
 
-    private MapGrid _grid;
+    private readonly MinimapConfig _cfg;
+    private readonly MapBaker _baker;
+    private readonly ReferenceHeight _ref = new();
+
+    private MapGrid _grid;            // full physics scanner before the bake is ready; live overlay after
+    private BakedMapView _view;
+    private int _viewVersion = -1;
+    private RevealMask _reveal;
+    private readonly Stopwatch _perf = new();
+    private int _perfFrames;
+    private double _perfAvgMs;
+    private int _perfLoggedBaked, _perfLoggedScan;
+    private readonly Stopwatch _tView = new(), _tOverlay = new(), _tUpload = new();
+    private string _perfDetail = "";
     private Transform _target;
     private bool _targetIsPlayer;
     private float _nextTargetSearch;
@@ -33,7 +49,11 @@ internal sealed class MinimapFeature : IDisposable
     private readonly Color32[] _pixels = new Color32[TexSize * TexSize];
     private Il2CppStructArray<Color32> _nativePixels;
 
-    public MinimapFeature(MinimapConfig cfg) => _cfg = cfg;
+    public MinimapFeature(MinimapConfig cfg, MapBaker baker)
+    {
+        _cfg = cfg;
+        _baker = baker;
+    }
 
     public void Update()
     {
@@ -51,27 +71,85 @@ internal sealed class MinimapFeature : IDisposable
             {
                 _target = found;
                 _grid = null;
+                _view = null;
+                _reveal = null;
+                _ref.Reset();
                 if (_target != null)
                     Mod.Log.LogInfo($"Minimap tracking '{_target.name}' ({(_targetIsPlayer ? "local player" : "camera fallback")}).");
             }
         }
 
         if (!_cfg.Enabled.Value || _target == null || !_targetIsPlayer) return;
+        _perf.Start();
 
-        // F8: log cell classification along 8 directions (live vs. stored in the grid).
-        if (_grid != null && Input.GetKeyDown(KeyCode.F8))
-            _grid.DebugRays(_target.position, 15f, Mod.Log);
+        // F8: log cell classification along 8 directions (live vs. stored), and the frame cost.
+        if (Input.GetKeyDown(KeyCode.F8))
+        {
+            _grid?.DebugRays(_target.position, 15f, Mod.Log);
+            Mod.Log.LogInfo($"[Perf] minimap {_perfAvgMs:F3} ms/frame (avg of {PerfFrames} frames, {(_view != null ? "baked map + overlay" : "physics scan")})");
+        }
 
-        if (_grid == null || !Mathf.Approximately(_grid.CellSize, _cfg.CellSize.Value))
-            _grid = new MapGrid(Mathf.Clamp(_cfg.CellSize.Value, 0.1f, 4f));
+        float cell = Mathf.Clamp(_cfg.CellSize.Value, 0.1f, 4f);
+        if (_grid == null || !Mathf.Approximately(_grid.CellSize, cell)) _grid = new MapGrid(cell);
 
-        _grid.Sample(_target.position, _cfg.SampleRadius.Value, Math.Max(1, _cfg.SampleBudget.Value), _cfg.RefreshSeconds.Value);
+        var feet = _target.position;
+        _ref.Update(feet.y);
+        _reveal ??= new RevealMask(cell);
+        _reveal.Reveal(feet, _cfg.RevealRadius.Value);
+
+        // Baked map (re)built whenever the baker publishes a new heightfield (first bake, incremental).
+        if (_baker.Heightfield == null) _view = null;
+        else if (_viewVersion != _baker.Version || _view == null || !Mathf.Approximately(_view.CellSize, cell))
+        {
+            _view = new BakedMapView(_baker.Heightfield, _baker.Terrain, cell) { Reveal = _reveal };
+            _viewVersion = _baker.Version;
+        }
+
+        if (_view != null)
+        {
+            // F6: compare baked vs physics classification on random cells around the player.
+            if (Input.GetKeyDown(KeyCode.F6))
+                Diagnostics.BakeParity.Run(feet, _ref.Value, _baker.Heightfield, _baker.Terrain, cell);
+            _view.ShowAll = _cfg.RevealFullMap.Value;
+            _view.SetReference(_ref.Value);
+            _tView.Start();
+            _view.Update(feet, _cfg.ViewRadius.Value, ViewBudgetMs);
+            _tView.Stop();
+            _tOverlay.Start();
+            // Live overlay near the player: doors, destruction, anything changed since the bake.
+            _grid.Sample(feet, _ref.Value, OverlayRadius, OverlayBudget, OverlayRefreshSeconds, _view.OverrideFromOverlay);
+            _tOverlay.Stop();
+        }
+        else
+        {
+            _grid.Sample(feet, _ref.Value, _cfg.SampleRadius.Value, Math.Max(1, _cfg.SampleBudget.Value), _cfg.RefreshSeconds.Value);
+        }
+        _perf.Stop();
     }
 
     public void LateUpdate()
     {
         if (!_cfg.Enabled.Value || _grid == null || _target == null || !_targetIsPlayer) return;
+        _perf.Start();
         Compose();
+        _perf.Stop();
+
+        if (++_perfFrames >= PerfFrames)
+        {
+            _perfAvgMs = _perf.Elapsed.TotalMilliseconds / _perfFrames;
+            _perfDetail = $"view {_tView.Elapsed.TotalMilliseconds / _perfFrames:F2}, overlay {_tOverlay.Elapsed.TotalMilliseconds / _perfFrames:F2}, " +
+                          $"upload {_tUpload.Elapsed.TotalMilliseconds / _perfFrames:F2} ms";
+            _perf.Reset(); _tView.Reset(); _tOverlay.Reset(); _tUpload.Reset();
+            _perfFrames = 0;
+
+            // Log the cost for the first few windows per mode automatically (F8 logs it on demand).
+            bool baked = _view != null;
+            if (baked ? _perfLoggedBaked < 4 : _perfLoggedScan < 4)
+            {
+                if (baked) _perfLoggedBaked++; else _perfLoggedScan++;
+                Mod.Log.LogInfo($"[Perf] minimap {_perfAvgMs:F3} ms/frame (avg of {PerfFrames} frames, {(baked ? "baked map + overlay" : "physics scan")}): {_perfDetail}");
+            }
+        }
     }
 
     public void OnGUI()
@@ -80,7 +158,12 @@ internal sealed class MinimapFeature : IDisposable
         if (Event.current.type != EventType.Repaint) return;
 
         int size = _cfg.SizePx.Value;
-        GUI.DrawTexture(new Rect(Screen.width - size - 16, 16, size, size), _tex, ScaleMode.StretchToFill, true);
+        var rect = new Rect(Screen.width - size - 16, 16, size, size);
+        GUI.DrawTexture(rect, _tex, ScaleMode.StretchToFill, true);
+
+        // First bake of a level in progress (incremental re-bakes keep showing the old map).
+        if (_baker.Heightfield == null && _baker.Current is MapBaker.State.LoadingCache or MapBaker.State.Collecting or MapBaker.State.Rasterizing)
+            GUI.Label(new Rect(rect.x, rect.yMax + 4, size, 22), $"Mapping level… {_baker.Progress:P0}");
     }
 
     public void Dispose()
@@ -89,6 +172,7 @@ internal sealed class MinimapFeature : IDisposable
         _tex = null;
         _nativePixels = null;
         _grid = null;
+        _view = null;
     }
 
     /// <summary>Builds the round, rotated map image from the grid and uploads it.</summary>
@@ -133,13 +217,19 @@ internal sealed class MinimapFeature : IDisposable
                 float u = du * worldPerPx;
                 float wx = feet.x + cos * u + sin * v;
                 float wz = feet.z - sin * u + cos * v;
-                var c = _grid.Get(Mathf.FloorToInt(wx * invCell), Mathf.FloorToInt(wz * invCell));
+                // Managed floor: UnityEngine.Mathf calls are IL2CPP interop calls, and two per pixel
+                // (130k per frame) cost ~13 ms.
+                int cx = (int)MathF.Floor(wx * invCell), cz = (int)MathF.Floor(wz * invCell);
+                var c = _view != null ? _view.Get(cx, cz) : default;
+                if (c.a == 0) c = _grid.Get(cx, cz); // not built yet / overlay-only cells
                 _pixels[row + px] = c.a == 0 ? Background : c;
             }
         }
 
         DrawMarker(_target.eulerAngles.y - yawDeg);
+        _tUpload.Start();
         Upload();
+        _tUpload.Stop();
     }
 
     /// <summary>Dot in the centre plus a short tick showing which way the character faces.</summary>

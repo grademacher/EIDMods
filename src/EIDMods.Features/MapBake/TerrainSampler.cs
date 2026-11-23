@@ -9,28 +9,28 @@ namespace EIDMods.Features.MapBake;
 /// </summary>
 internal sealed class TerrainSampler : IHeightSampler
 {
-    private readonly Terrain[] _terrains;
+    // Terrains don't move: position/size are cached so a sample is one interop call, not three.
+    private readonly (Terrain terrain, Vector3 pos, Vector3 size)[] _terrains;
 
-    private TerrainSampler(Terrain[] terrains) => _terrains = terrains;
+    private TerrainSampler((Terrain, Vector3, Vector3)[] terrains) => _terrains = terrains;
 
     /// <summary>A sampler over the currently active terrains, or null if there are none.</summary>
     public static TerrainSampler FromActive()
     {
         var active = Terrain.activeTerrains;
         if (active == null || active.Length == 0) return null;
-        var list = new Terrain[active.Length];
-        for (int i = 0; i < active.Length; i++) list[i] = active[i];
+        var list = new (Terrain, Vector3, Vector3)[active.Length];
+        for (int i = 0; i < active.Length; i++)
+            list[i] = (active[i], active[i].transform.position, active[i].terrainData.size);
         return new TerrainSampler(list);
     }
 
     public bool TrySample(float x, float z, out float height)
     {
-        foreach (var t in _terrains)
+        foreach (var (t, p, size) in _terrains)
         {
-            if (t == null) continue;
-            var p = t.transform.position;
-            var size = t.terrainData.size;
             if (x < p.x || z < p.z || x > p.x + size.x || z > p.z + size.z) continue;
+            if (t == null) continue;
             height = p.y + t.SampleHeight(new Vector3(x, 0f, z));
             return true;
         }

@@ -53,7 +53,8 @@ The mod is split so feature changes don't need a game restart:
 | Project | Deployed to | Reloadable? |
 |---|---|---|
 | `src/EIDMods`: the **loader**, the only BepInEx plugin. It owns the one injected MonoBehaviour (`HostBehaviour`) and passes Update/LateUpdate/OnGUI on to the features. | `BepInEx\plugins\EIDMods\` | No. The game locks it, so changes need a restart. Keep it small. |
-| `src/EIDMods.Features`: **all mod features** (minimap, probe, ...). | `BepInEx\EIDMods\` (outside `plugins` so BepInEx doesn't scan it) | **Yes** |
+| `src/EIDMods.Features`: **all mod features** (minimap, map baker, probes, ...). | `BepInEx\EIDMods\` (outside `plugins` so BepInEx doesn't scan it) | **Yes** |
+| `src/EIDMods.MapCore`: pure map math (heightfield, rasterizer, classifier, cache). No Unity references, unit-tested in `tests/EIDMods.MapCore.Tests` (`dotnet test tests/EIDMods.MapCore.Tests`). | Compiled into `EIDMods.Features.dll` by link, so it's still one reloadable DLL | **Yes** |
 
 Workflow: edit a feature, then run `dotnet build src/EIDMods.Features -c Release`. The loader sees the new DLL and
 reloads it within about a second. **F10** reloads by hand. Both are configurable in `BepInEx\config\eidmods.core.cfg`
@@ -70,11 +71,57 @@ How it works and its rules (see `src/EIDMods/IFeatureModule.cs`):
   next reload resumes them.
 - Deploy compares file hashes, so a rebuild with no real change doesn't touch the deployed DLLs. If the loader really
   changed while the game is running, the build warns "Not deployed": close the game and build again.
+- **Config entries must use types from outside the features DLL** (bool, float, KeyCode, ...). An enum declared in
+  the features is a new type on every reload, BepInEx keeps the first binding, and the next `Bind` throws
+  `InvalidCastException`, so the features fail to load.
+- Each reload re-reads `eidmods.core.cfg`, so editing the file and pressing F10 applies the change.
+- Background tasks must take a `CancellationToken` that `Unload()` cancels (see `MapBaker`).
+- **Hot loops must not call `UnityEngine.Mathf` / `Color32.Lerp` / other Unity statics.** In IL2CPP each one is an
+  interop call. Two `Mathf.FloorToInt` calls per minimap pixel cost about 13 ms per frame. Use `MathF` and plain
+  arithmetic.
 
 ## Minimap approach
 
-**v2 (current): built from level collision data.** There's no camera, so the game's darkness doesn't matter
-(`src/EIDMods.Features/Minimap/MapGrid.cs`).
+**v3 (current): a whole-level map baked once per level from collider geometry.** The bake is cached on disk and drawn
+as a snapshot around you. Plan and evidence: `.project-memory/research/2026-11-23-minimap-geometry-bake-plan.md`.
+
+- **What the levels are** (F7 bake probe, The Moor, 2026-11-23): hand-built scenes with sub-scenes (0 generator
+  modules), with 74k static colliders: 16k boxes, 56k mesh colliders (**98.6 % readable from script**), and 1 terrain.
+  `MapData.Preview` is 1080×1920 menu art, not a map.
+- **Bake** (`MapBake/MapBaker.cs`): cache → collect → rasterize → cache.
+  - **Collect**, on the main thread in `BakeBudgetMs` slices (`GeometryCollector`):
+    - box colliders become boxes;
+    - readable meshes are copied once per mesh;
+    - everything else is measured per cell with `Collider.Raycast`;
+    - colliders with a Rigidbody, triggers and terrain are skipped.
+  - **Rasterize** on a background task into a **column heightfield**: per 0.5 m cell, the solid height spans
+    (`MapCore`, Recast-style clip-to-cell). Convex colliders fill solid; non-convex meshes record only surfaces, so
+    doorways under arches stay open.
+  - **Cache** to `BepInEx\cache\EIDMods\maps\<MapID>_<version>_<buildGUID>.bin.gz`.
+  - **The Moor:** about 1.3 s of main-thread work spread over about 12 s, then about 23 s in the background. The
+    cache is 18 MB, and **a cache hit is ready in about 1 s**.
+  - **Updates:** when more scenes load (sub-scenes streaming in), new colliders are baked incrementally (under 1 s).
+    Hot reload and level change cancel a bake cleanly.
+- **Drawing** (`Minimap/BakedMapView.cs`):
+  - Cells are classified from the heightfield with the same rules as the physics scanner below (`ColumnClassifier`),
+    relative to the reference height.
+  - The result is despeckled and colored lazily per 32×32 chunk, nearest first, within a 2 ms budget. On a floor
+    change, the old image stays up until the new one is built.
+  - Terrain is sampled live (`Terrain.SampleHeight`).
+- **Reveal:** by default only cells within `RevealRadius` (25 m) of where you've been are shown. Set
+  `RevealFullMap = true` to show the whole level.
+- **Live overlay:** the physics scanner keeps running within 10 m of you (20 cells/frame, 2 s refresh). Where it
+  disagrees with the bake, it wins. That covers doors, destruction and props with a Rigidbody.
+- **Before the first bake of a level finishes,** the physics scanner draws the whole map, with a
+  "Mapping level… N %" label under it.
+- **Cost:** about **1.3 ms/frame** steady (compose about 0.9 ms, overlay about 0.3 ms).
+- **Accuracy:** about 90 % of random cells agree with the physics classifier. Most disagreements are physics
+  artifacts (a ray that starts inside a solid falls through) or props with a Rigidbody, which the overlay covers.
+- **Debug:** F6 compares baked vs physics classification (`[Parity]`), F7 runs the bake probe, F8 runs `[MapDebug]`
+  rays plus `[Perf]`, and F9 runs the level probe.
+
+**v2: physics scanner** (`src/EIDMods.Features/Minimap/MapGrid.cs`). It is now the pre-bake fallback and the live
+overlay, and its rules are the classification rules for both:
 
 - **What level data exists** (from the F9 level probe in the `Tutorial` scene, 2026-11-23):
   - **Generator modules:** 0. `AG.Generation.Module` exists in code, but this level was built by hand.
@@ -110,7 +157,7 @@ How it works and its rules (see `src/EIDMods/IFeatureModule.cs`):
 - **Who it follows:** `AG.Actors.Player.Local`, the game's own static for your character. If that isn't set, it falls
   back to `Mirror.NetworkClient.localPlayer`. Never `Camera.main`: it's a third-person camera behind the character.
 - **Debug:** F8 logs the cell classification along 8 directions, both live and as stored in the grid, as `[MapDebug]`
-  lines. F9 runs the level probe.
+  lines.
 
 v1 used an orthographic camera rendering into a RenderTexture. It was dropped because HDRP rendered it with the
 scene's real (dark) lighting.
@@ -118,10 +165,11 @@ scene's real (dark) lighting.
 Still to look at:
 - **Zoom.** `ViewRadius` goes down to 5 m with `=`, which can hide every wall. Watch for this when "the map looks
   empty".
-- **Fog of war / full map.** The map already shows only explored cells. Persisting them per level is a later step.
+- **Hills read as walls.** Terrain more than head height above you is classified as a wall relative to your level, so
+  in a valley the hillsides look like a wall band. Showing high ground as shaded ground instead is a design change.
+- **Style pass.** Anti-aliased wall outlines, soft edges, icons.
 - **Teammates.** Show the other players as markers (`AG.Actors.Player.Players` lists them).
-- **Performance.** Not measured yet. Composing costs about 65k grid lookups per frame, plus up to `SampleBudget` cells
-  of physics queries.
+- **Persisting explored areas** per level across visits.
 
 ## Reverse-engineering workflow
 

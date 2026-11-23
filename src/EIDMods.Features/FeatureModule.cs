@@ -13,9 +13,11 @@ public sealed class FeatureModule : IFeatureModule
     public void Load(FeatureContext context)
     {
         Mod.Context = context;
+        // Pick up edits to the .cfg file on every hot reload (BepInEx only reads it at startup).
+        context.Config.Reload();
         var cfg = new MinimapConfig(context.Config);
         _baker = new MapBaker(UnityEngine.Mathf.Clamp(cfg.CellSize.Value, 0.1f, 4f), () => cfg.BakeBudgetMs.Value);
-        _minimap = new MinimapFeature(cfg);
+        _minimap = new MinimapFeature(cfg, _baker);
         Mod.Log.LogInfo($"Features #{context.Generation} up (minimap, map baker).");
     }
 
