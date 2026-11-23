@@ -44,6 +44,7 @@ internal sealed class MinimapFeature : IDisposable
     private readonly Stopwatch _perf = new();
     private int _perfFrames;
     private double _perfAvgMs;
+    private readonly Stopwatch _perfWindow = new();
     private int _perfLoggedBaked, _perfLoggedScan;
     private readonly Stopwatch _tView = new(), _tOverlay = new(), _tUpload = new(), _tMarkers = new();
 
@@ -188,12 +189,17 @@ internal sealed class MinimapFeature : IDisposable
         Compose();
         _perf.Stop();
 
+        if (!_perfWindow.IsRunning) _perfWindow.Start();
         if (++_perfFrames >= PerfFrames)
         {
             _perfAvgMs = _perf.Elapsed.TotalMilliseconds / _perfFrames;
+            // The game's whole frame time over the same window, to put our cost in proportion.
+            double frameMs = _perfWindow.Elapsed.TotalMilliseconds / _perfFrames;
+            _perfWindow.Restart();
             _perfDetail = $"view {_tView.Elapsed.TotalMilliseconds / _perfFrames:F2}, overlay {_tOverlay.Elapsed.TotalMilliseconds / _perfFrames:F2}, " +
                           $"markers {_tMarkers.Elapsed.TotalMilliseconds / _perfFrames:F2} ({_markers.Count}), " +
-                          $"upload {_tUpload.Elapsed.TotalMilliseconds / _perfFrames:F2} ms";
+                          $"upload {_tUpload.Elapsed.TotalMilliseconds / _perfFrames:F2} ms | game frame {frameMs:F2} ms " +
+                          $"({1000.0 / frameMs:F0} fps), minimap = {100.0 * _perfAvgMs / frameMs:F1} % of the frame";
             _perf.Reset(); _tView.Reset(); _tOverlay.Reset(); _tUpload.Reset(); _tMarkers.Reset();
             _perfFrames = 0;
 
