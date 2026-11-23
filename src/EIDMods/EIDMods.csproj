@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>EIDMods</AssemblyName>
+    <RootNamespace>EIDMods</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    These references only exist after BepInEx has been installed into the game folder
+    AND the game has been launched once (BepInEx generates the interop assemblies on first run).
+  -->
+  <ItemGroup>
+    <Reference Include="$(BepInExPath)\core\BepInEx.Core.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\core\BepInEx.Unity.IL2CPP.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\core\Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\core\Il2CppInterop.Common.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\core\0Harmony.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\interop\*.dll" Private="false" />
+  </ItemGroup>
+
+  <Target Name="CheckBepInEx" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(BepInExPath)\interop\Assembly-CSharp.dll')"
+           Text="Interop assemblies not found in $(BepInExPath)\interop. Install BepInEx 6 IL2CPP into the game folder and launch the game once (see README)." />
+  </Target>
+
+  <!-- Copy the built plugin into the game's plugin folder. -->
+  <Target Name="DeployToGame" AfterTargets="Build">
+    <MakeDir Directories="$(BepInExPath)\plugins\EIDMods" />
+    <!-- The running game locks the DLL; don't fail the build over it, just say so. -->
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BepInExPath)\plugins\EIDMods"
+          Retries="0" ContinueOnError="WarnAndContinue">
+      <Output TaskParameter="CopiedFiles" ItemName="_EidDeployed" />
+    </Copy>
+    <Message Condition="'@(_EidDeployed)' != ''" Importance="high" Text="Deployed $(TargetFileName) -> $(BepInExPath)\plugins\EIDMods" />
+    <Warning Condition="'@(_EidDeployed)' == ''" Text="Not deployed: the game is probably running and has $(TargetFileName) locked. Close the game and build again." />
+  </Target>
+
+</Project>
