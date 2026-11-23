@@ -21,7 +21,13 @@ public sealed class FeatureModule : IFeatureModule
         _minimap = null;
     }
 
-    public void Update() => _minimap?.Update();
+    public void Update()
+    {
+        // F9: dump level data around the player to the log (see Diagnostics/LevelProbe).
+        if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F9) && AG.Actors.Player.Local != null)
+            Diagnostics.LevelProbe.Run(AG.Actors.Player.Local.transform);
+        _minimap?.Update();
+    }
     public void LateUpdate() => _minimap?.LateUpdate();
     public void OnGUI() => _minimap?.OnGUI();
 }

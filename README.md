@@ -73,25 +73,55 @@ How it works and its rules (see `src/EIDMods/IFeatureModule.cs`):
 
 ## Minimap approach
 
-**v1 (working, verified in a dungeon 2026-11-23):** An orthographic camera above the local player renders into a
-RenderTexture, which is drawn in the top-right corner. The near clip plane cuts off ceilings.
+**v2 (current): built from level collision data.** There's no camera, so the game's darkness doesn't matter
+(`src/EIDMods.Features/Minimap/MapGrid.cs`).
+
+- **What level data exists** (from the F9 level probe in the `Tutorial` scene, 2026-11-23):
+  - **Generator modules:** 0. `AG.Generation.Module` exists in code, but this level was built by hand.
+  - **NavMesh:** present (`SamplePosition` works), but `CalculateTriangulation`/`Triangulate` are stripped, so the
+    whole mesh can't be read.
+  - **Colliders:** plenty of level geometry, all static. That's what the map uses.
+- **Layers:**
+  - **Used** (level geometry): 0 Default (incl. Terrain), 7 Always Render, 9 Small, 10 Medium, 13 Distant,
+    14 Terrain. Small (9) counts for floor height only, never as a wall or obstacle, because small props were the
+    main source of single-cell noise.
+  - **Ignored:** 6 ClothCollision (your own cloth colliders sit 0.2 m away), 19 Hitbox, 21 Pawn, 22 Actor,
+    23 Trigger, 11/12 Items, ragdoll layers, 4 Water, 20 Navigation Obstacle.
+- **Reference height:** cells are classified against a **reference height**, not your live feet height. The reference
+  only moves once you've climbed or dropped more than 1 m. Classifying against live feet height made borderline cells
+  flip between wall and floor as your height bobbed while walking.
+- **Cell classification:** the world is split into 0.5 m cells, each checked against the reference height:
+  1. A `CheckBox` at knee-to-head height (+0.6 to +1.6 m). If something is there, cast a ray down from +2.6 m. A
+     walkable top (normal.y > 0.75) **above +0.5 m** means a **step up**. The height check matters: a ray that starts
+     inside a tall wall mesh doesn't hit it from the inside, falls through to the ground behind it, and would
+     otherwise look like floor. Otherwise a second `CheckBox` at head height (+1.7 to +2.3 m) separates a **wall**
+     (tall) from an **obstacle** (knee- or waist-high clutter, drawn dimmer).
+  2. Otherwise, cast a ray down from +0.6 m. Floor within ±0.5 m is one flat color; beyond that it's shaded by height
+     (lighter = higher). A drop of more than 1.5 m reads as a lower floor, and no hit at all means a **void**.
+- **Despeckle:** what's drawn is a majority-filtered copy of the grid. A cell that matches fewer than 2 of its 8
+  neighbors takes the most common neighboring type. It's rebuilt only for chunks whose cells changed. A stronger
+  filter would erase one-cell-wide walls.
+- **Exploration:** cells are sampled nearest-first, up to `SampleBudget` per frame within `SampleRadius`, and kept as
+  you explore. A cell is re-sampled after `RefreshSeconds` (doors) or when the reference height changes (another
+  floor). A new character means a new level, so a fresh map.
+- **Drawing:** a round 256 px image composed on the CPU each frame and rotated with the view camera. One bulk memcpy
+  goes into an IL2CPP array, then `SetPixels32` + `Apply`. The marker's dot is you, and its tick shows which way your
+  character faces.
 - **Who it follows:** `AG.Actors.Player.Local`, the game's own static for your character. If that isn't set, it falls
-  back to `Mirror.NetworkClient.localPlayer`, then to `Camera.main` (in menus). It re-checks every second.
-  Don't follow `Camera.main` in game: it's a third-person camera behind the character, so the map ends up off-center.
-- **Rotation:** "up" on the map is where the view camera looks, not where the character's body faces.
+  back to `Mirror.NetworkClient.localPlayer`. Never `Camera.main`: it's a third-person camera behind the character.
+- **Debug:** F8 logs the cell classification along 8 directions, both live and as stored in the grid, as `[MapDebug]`
+  lines. F9 runs the level probe.
+
+v1 used an orthographic camera rendering into a RenderTexture. It was dropped because HDRP rendered it with the
+scene's real (dark) lighting.
 
 Still to look at:
-- **Darkness.** HDRP renders the map with the scene's real lighting, so unlit areas show up dark. Possible fixes: add
-  an `HDAdditionalCameraData` with a fixed exposure, or render only certain layers with a flat material.
-- **HDRP cost.** A second HDRP camera is expensive. Use a lower resolution, render every N frames, and disable
-  post-processing on it.
-
-**v2 options** (these don't depend on lighting, and they look like a real "map"):
-- **NavMesh.** If enemies use Unity NavMesh, `NavMesh.CalculateTriangulation()` gives the walkable floor plan.
-  Draw it once to a texture and overlay the player position. Cheap and clean.
-- **Collider slice.** Raycast or overlap the level's colliders on a grid around the player to build the walls.
-- **Fog of war.** Reveal cells as the player walks through them, so the map shows only explored areas.
+- **Zoom.** `ViewRadius` goes down to 5 m with `=`, which can hide every wall. Watch for this when "the map looks
+  empty".
+- **Fog of war / full map.** The map already shows only explored cells. Persisting them per level is a later step.
 - **Teammates.** Show the other players as markers (`AG.Actors.Player.Players` lists them).
+- **Performance.** Not measured yet. Composing costs about 65k grid lookups per frame, plus up to `SampleBudget` cells
+  of physics queries.
 
 ## Reverse-engineering workflow
 
