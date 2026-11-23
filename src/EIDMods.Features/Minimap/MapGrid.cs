@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using EIDMods.MapCore;
 
 namespace EIDMods.Features.Minimap;
 
@@ -41,13 +42,6 @@ internal sealed class MapGrid
     private static readonly Color32 FloorUp = new(118, 110, 97, 240);
     private static readonly Color32 FloorDown = new(40, 37, 34, 235);
     private static readonly Color32 Void = new(8, 8, 10, 225);
-
-    /// <summary>
-    /// Wall: blocks body AND head height (a real wall/pillar).
-    /// Obstacle: blocks body height only, with no walkable top (debris, crates, railings).
-    /// StepUp: blocks body height but has a walkable top (stairs, ledges, rising ground).
-    /// </summary>
-    public enum CellKind : byte { Unknown = 0, Floor, StepUp, Obstacle, Wall, Void }
 
     private sealed class Chunk
     {
@@ -227,33 +221,29 @@ internal sealed class MapGrid
                 var kind = chunk.Kind[i];
                 if (kind == CellKind.Unknown) { chunk.Display[i] = default; continue; }
 
-                // Majority filter over the 8 neighbours: a cell that agrees with fewer than 2 of them is a
-                // speck (rubble flipping between step-up and floor, a lone post, a pinhole in a wall) and
-                // takes the most common neighbouring kind instead.
-                int cx = baseX + lx, cz = baseZ + lz, same = 0, known = 0;
-                Span<int> counts = stackalloc int[6];
+                // Majority filter (MapCore.Despeckle); a speck takes the raw colour of the first
+                // neighbour of the winning kind.
+                int cx = baseX + lx, cz = baseZ + lz, n = 0;
+                Span<CellKind> neighbours = stackalloc CellKind[8];
                 Span<Color32> sample = stackalloc Color32[6];
+                Span<bool> sampled = stackalloc bool[6];
                 for (int dz = -1; dz <= 1; dz++)
                 for (int dx = -1; dx <= 1; dx++)
                 {
                     if (dx == 0 && dz == 0) continue;
                     var nChunk = FindChunk((cx + dx) >> 5, (cz + dz) >> 5, create: false);
-                    if (nChunk == null) continue;
-                    int ni = (((cz + dz) & 31) << 5) | ((cx + dx) & 31);
-                    var k = nChunk.Kind[ni];
-                    if (k == CellKind.Unknown) continue;
-                    known++;
-                    if (k == kind) same++;
-                    if (counts[(int)k]++ == 0) sample[(int)k] = nChunk.Raw[ni];
+                    var k = CellKind.Unknown;
+                    if (nChunk != null)
+                    {
+                        int ni = (((cz + dz) & 31) << 5) | ((cx + dx) & 31);
+                        k = nChunk.Kind[ni];
+                        if (k != CellKind.Unknown && !sampled[(int)k]) { sample[(int)k] = nChunk.Raw[ni]; sampled[(int)k] = true; }
+                    }
+                    neighbours[n++] = k;
                 }
 
-                if (known >= 4 && same <= 1)
-                {
-                    int best = (int)kind;
-                    for (int k = 1; k < counts.Length; k++) if (counts[k] > counts[best]) best = k;
-                    chunk.Display[i] = best == (int)kind ? chunk.Raw[i] : sample[best];
-                }
-                else chunk.Display[i] = chunk.Raw[i];
+                var shown = Despeckle.Filter(kind, neighbours);
+                chunk.Display[i] = shown == kind ? chunk.Raw[i] : sample[(int)shown];
             }
         }
         _dirty.Clear();
