@@ -75,7 +75,7 @@ internal sealed class MapGrid
     /// uses it as a live overlay). Returns how many cells were sampled.
     /// </summary>
     public int Sample(Vector3 feet, float refY, float radius, int budget, float refreshSeconds,
-        Action<int, int, CellKind, float> onClassified = null)
+        Action<int, int, CellKind, float, bool> onClassified = null)
     {
         if (!Mathf.Approximately(radius, _offsetsRadius)) BuildOffsets(radius);
 
@@ -107,7 +107,8 @@ internal sealed class MapGrid
             chunk.SampledRefY[i] = refY;
             chunk.SampledAt[i] = now;
             sampled++;
-            onClassified?.Invoke(cx, cz, kind, dy);
+            if (onClassified != null)
+                onClassified(cx, cz, kind, dy, !OverlayPolicy.IsBlocked(kind) && IsConservativelyClear(x, z, refY));
 
             if (chunk.Kind[i] == kind && chunk.Raw[i].Equals(color)) continue; // unchanged: nothing to redraw
             chunk.Kind[i] = kind;
@@ -119,6 +120,21 @@ internal sealed class MapGrid
         return sampled;
     }
 
+    /// <summary>
+    /// Nothing at body height anywhere in the cell (full-cell box, no inset). The overlay needs this
+    /// before it may "open" a cell the bake has as blocked: the inset box can miss a thin wall.
+    /// </summary>
+    // Same heights as the bake's ColumnClassifier (ClassifierBands), as box centre/half-height.
+    private const float BodyMid = (ClassifierBands.BodyLow + ClassifierBands.BodyHigh) / 2, BodyHalf = (ClassifierBands.BodyHigh - ClassifierBands.BodyLow) / 2;
+    private const float HeadMid = (ClassifierBands.HeadLow + ClassifierBands.HeadHigh) / 2, HeadHalf = (ClassifierBands.HeadHigh - ClassifierBands.HeadLow) / 2;
+
+    private bool IsConservativelyClear(float x, float z, float feetY)
+    {
+        float c = CellSize;
+        return !Physics.CheckBox(new Vector3(x, feetY + BodyMid, z), new Vector3(c * 0.45f, BodyHalf, c * 0.45f),
+            Quaternion.identity, SolidMask, QueryTriggerInteraction.Ignore);
+    }
+
     /// <summary>What's at world (x, z) for someone standing at feetY. dy = floor height - feetY.</summary>
     public CellKind ClassifyKind(float x, float z, float feetY, out float dy)
     {
@@ -126,7 +142,10 @@ internal sealed class MapGrid
         dy = 0f;
 
         // Something solid between knee and head height?
-        bool blocked = Physics.CheckBox(new Vector3(x, feetY + 1.1f, z), new Vector3(c * 0.45f, 0.5f, c * 0.45f),
+        // Same inset as the bake (ClassifierBands.CellInset): geometry only grazing the cell's edge
+        // strip (door frames) doesn't occupy it.
+        float h = Math.Max(0.05f, c * 0.5f - ClassifierBands.CellInset);
+        bool blocked = Physics.CheckBox(new Vector3(x, feetY + BodyMid, z), new Vector3(h, BodyHalf, h),
             Quaternion.identity, SolidMask, QueryTriggerInteraction.Ignore);
 
         if (blocked)
@@ -135,20 +154,20 @@ internal sealed class MapGrid
             // The top must be above knee height: the box only overlaps from feet+0.6 up, so a hit lower
             // than that means the ray started INSIDE a tall wall (mesh colliders don't register hits
             // from the inside) and fell through to the ground behind it.
-            if (Physics.Raycast(new Vector3(x, feetY + 2.6f, z), Vector3.down, out var top, 2.6f, FloorMask, QueryTriggerInteraction.Ignore)
-                && top.normal.y > 0.75f && top.point.y > feetY + 0.5f)
+            if (Physics.Raycast(new Vector3(x, feetY + ClassifierBands.StepRayFrom, z), Vector3.down, out var top, ClassifierBands.StepRayFrom, FloorMask, QueryTriggerInteraction.Ignore)
+                && top.normal.y > 0.75f && top.point.y > feetY + ClassifierBands.StepMinTop)
             {
                 dy = top.point.y - feetY;
                 return CellKind.StepUp;
             }
             // Tall enough to be a wall? Something must also be there at head height (+1.7 to +2.3 m);
             // knee/waist-high clutter is only an obstacle.
-            bool tall = Physics.CheckBox(new Vector3(x, feetY + 2.0f, z), new Vector3(c * 0.45f, 0.3f, c * 0.45f),
+            bool tall = Physics.CheckBox(new Vector3(x, feetY + HeadMid, z), new Vector3(h, HeadHalf, h),
                 Quaternion.identity, SolidMask, QueryTriggerInteraction.Ignore);
             return tall ? CellKind.Wall : CellKind.Obstacle;
         }
 
-        if (!Physics.Raycast(new Vector3(x, feetY + 0.6f, z), Vector3.down, out var hit, 10f, FloorMask, QueryTriggerInteraction.Ignore))
+        if (!Physics.Raycast(new Vector3(x, feetY + ClassifierBands.FloorRayFrom, z), Vector3.down, out var hit, ClassifierBands.FloorRayLength, FloorMask, QueryTriggerInteraction.Ignore))
             return CellKind.Void;
 
         dy = hit.point.y - feetY;

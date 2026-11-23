@@ -110,14 +110,25 @@ as a snapshot around you. Plan and evidence: `.project-memory/research/2026-11-2
   - Terrain is sampled live (`Terrain.SampleHeight`).
 - **Reveal:** by default only cells within `RevealRadius` (25 m) of where you've been are shown. Set
   `RevealFullMap = true` to show the whole level.
-- **Live overlay:** the physics scanner keeps running within 10 m of you (20 cells/frame, 2 s refresh). Where it
-  disagrees with the bake, it wins. That covers doors, destruction and props with a Rigidbody.
+- **Cell occupancy inset:** a cell counts as occupied only if geometry reaches its inner part, at least 0.1 m in from
+  each edge (`ClassifierBands.CellInset`). The bake and the overlay both use this rule, so a door frame that only
+  grazes a doorway cell no longer closes it. Thin single planes in non-convex meshes keep the conservative rule.
+- **Step-up reachability:** step-up (lighter "higher floor") is kept only where you can walk up to it from a floor,
+  through neighbor steps of at most 0.6 m (`MapCore.StepReachability`). That covers stairs, ramps and rising ground.
+  Raised tops you can't walk onto, like a railing's 1 m top rail, a table or a crate, are barriers and draw as
+  **walls**. Low clutter with no flat top (barrels, debris) stays a dim obstacle.
+- **Live overlay:** the physics scanner keeps running within 10 m of you (20 cells/frame, 2 s refresh). It overrides
+  the bake **only when they disagree on blocked vs open** (`OverlayPolicy`):
+  - A door opening or a wall being destroyed only counts once a full-cell check is completely clear.
+  - Disagreements about *which kind* of blocked are ignored. Physics reports "step up" on real walls when its ray
+    starts inside one, and letting that win made catacomb walls vanish in sections as your height changed on slopes.
 - **Before the first bake of a level finishes,** the physics scanner draws the whole map, with a
   "Mapping level… N %" label under it.
 - **Cost:** about **1.3 ms/frame** steady (compose about 0.9 ms, overlay about 0.3 ms).
 - **Accuracy:** about 90 % of random cells agree with the physics classifier. Most disagreements are physics
   artifacts (a ray that starts inside a solid falls through) or props with a Rigidbody, which the overlay covers.
-- **Debug:** F6 compares baked vs physics classification (`[Parity]`), F7 runs the bake probe, F8 runs `[MapDebug]`
+- **Debug:** F5 dumps nearby colliders plus baked-vs-live cell maps (`[Nearby]`), F6 compares baked vs physics
+  classification (`[Parity]`), F7 runs the bake probe, F8 runs `[MapDebug]`
   rays plus `[Perf]`, and F9 runs the level probe.
 
 **v2: physics scanner** (`src/EIDMods.Features/Minimap/MapGrid.cs`). It is now the pre-bake fallback and the live
@@ -134,12 +145,15 @@ overlay, and its rules are the classification rules for both:
     main source of single-cell noise.
   - **Ignored:** 6 ClothCollision (your own cloth colliders sit 0.2 m away), 19 Hitbox, 21 Pawn, 22 Actor,
     23 Trigger, 11/12 Items, ragdoll layers, 4 Water, 20 Navigation Obstacle.
-- **Reference height:** cells are classified against a **reference height**, not your live feet height. The reference
-  only moves once you've climbed or dropped more than 1 m. Classifying against live feet height made borderline cells
-  flip between wall and floor as your height bobbed while walking.
+- **Reference height** (`MapCore.ReferenceHeight`): cells are classified against a **reference height**, not your
+  live feet height.
+  - It follows you once you've moved **more than 0.5 m up or down**, so small height bobs don't re-classify the map.
+    Classifying against live feet height made borderline cells flicker.
+  - The body band starts at +0.45 m, not knee height, so a 1 m railing still reads as a barrier even with the
+    reference 0.5 m above your feet. The old 1 m lag let a railing on a landing you'd walked down to draw as floor.
 - **Cell classification:** the world is split into 0.5 m cells, each checked against the reference height:
-  1. A `CheckBox` at knee-to-head height (+0.6 to +1.6 m). If something is there, cast a ray down from +2.6 m. A
-     walkable top (normal.y > 0.75) **above +0.5 m** means a **step up**. The height check matters: a ray that starts
+  1. A `CheckBox` at body height (+0.45 to +1.6 m). If something is there, cast a ray down from +2.6 m. A
+     walkable top (normal.y > 0.75) **above +0.45 m** means a **step up**. The height check matters: a ray that starts
      inside a tall wall mesh doesn't hit it from the inside, falls through to the ground behind it, and would
      otherwise look like floor. Otherwise a second `CheckBox` at head height (+1.7 to +2.3 m) separates a **wall**
      (tall) from an **obstacle** (knee- or waist-high clutter, drawn dimmer).

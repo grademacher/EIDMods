@@ -197,4 +197,59 @@ public class TriangleRasterizerTests
         Assert.True(work.Wait(TimeSpan.FromSeconds(2)), "rasterizer hung on a non-finite vertex");
         Assert.Equal(0, b.Build().ColumnCount);
     }
+
+    // ---- inset (narrow solid test, so doorways aren't eaten by frames grazing a cell) ----------
+
+    private static Heightfield Rasterize(bool solid, float inset, params (Vector3 min, Vector3 max)[] boxes)
+    {
+        var v = new List<Vector3>();
+        var idx = new List<int>();
+        foreach (var (min, max) in boxes) AddCuboid(v, idx, min, max);
+        var b = NewBuilder();
+        if (solid)
+        {
+            // One solid per box (as each collider is rasterized separately in the game).
+            for (int i = 0; i < boxes.Length; i++)
+                TriangleRasterizer.RasterizeSolid(b, v.GetRange(i * 8, 8).ToArray(),
+                    idx.GetRange(i * 36, 36).Select(k => k - i * 8).ToArray(), SpanFlags.None, inset);
+        }
+        else TriangleRasterizer.RasterizeShell(b, v.ToArray(), idx.ToArray(), SpanFlags.None, inset);
+        return b.Build();
+    }
+
+    [Fact]
+    public void Inset_DoorJambsGrazingCells_LeaveThemOpen()
+    {
+        // Jambs end 5 cm into cell 1 and 5 cm before cell 3's far edge: conservative marks cells 1
+        // and 3 solid (doorway 1 cell wide); a 0.1 m inset leaves cells 1..3 open (3 cells).
+        var jambs = new[] { (new Vector3(0, 0, 0), new Vector3(0.55f, 2.5f, 0.5f)), (new Vector3(1.95f, 0, 0), new Vector3(2.5f, 2.5f, 0.5f)) };
+        var conservative = Rasterize(solid: true, inset: 0f, jambs);
+        var inset = Rasterize(solid: true, inset: 0.1f, jambs);
+
+        Assert.NotEqual(0, conservative.GetSpans(1, 0).Length);
+        Assert.NotEqual(0, conservative.GetSpans(3, 0).Length);
+        foreach (int x in new[] { 1, 2, 3 }) Assert.Equal(0, inset.GetSpans(x, 0).Length);
+        Assert.NotEqual(0, inset.GetSpans(0, 0).Length);
+        Assert.NotEqual(0, inset.GetSpans(4, 0).Length);
+    }
+
+    [Fact]
+    public void Inset_ThickWallAcrossBoundary_StaysSolidOnBothSides()
+    {
+        var hf = Rasterize(solid: true, inset: 0.1f, (new Vector3(0.85f, 0, 0), new Vector3(1.15f, 3, 0.5f)));
+        Assert.NotEqual(0, hf.GetSpans(1, 0).Length);
+        Assert.NotEqual(0, hf.GetSpans(2, 0).Length);
+    }
+
+    [Fact]
+    public void Inset_ZeroThicknessPlaneInEdgeStrip_IsStillMarked()
+    {
+        // A single thin plane (non-convex shell) at x = 1.05: inside cell 2's 0.1 m edge strip.
+        // Zero extent along x keeps the conservative rule on that axis, so it doesn't vanish.
+        var b = NewBuilder();
+        var v = new[] { new Vector3(1.05f, 0, 0), new Vector3(1.05f, 0, 3), new Vector3(1.05f, 4, 3), new Vector3(1.05f, 4, 0) };
+        TriangleRasterizer.RasterizeShell(b, v, new[] { 0, 1, 2, 0, 2, 3 }, SpanFlags.None, 0.1f);
+        var hf = b.Build();
+        for (int z = 0; z <= 5; z++) Assert.NotEqual(0, hf.GetSpans(2, z).Length);
+    }
 }

@@ -17,14 +17,21 @@ public static class TriangleRasterizer
     private const int MaxPoly = 12;
 
     /// <summary>Surfaces only: one span per triangle per cell (non-convex meshes, so arches stay open).</summary>
-    public static void RasterizeShell(HeightfieldBuilder hf, ReadOnlySpan<Vector3> verts, ReadOnlySpan<int> indices, SpanFlags baseFlags)
+    /// <param name="inset">
+    /// Metres trimmed off each cell edge for the "is this cell touched" test (0 = conservative).
+    /// With an inset, geometry that only grazes a cell's edge strip (a door frame reaching 5 cm into
+    /// the doorway cell) doesn't make the cell solid. For shells only, a triangle with zero extent along
+    /// an axis (a single thin plane, possibly the whole wall) keeps the conservative rule on that axis
+    /// so it can't vanish. Solids always have real thickness, so their side faces get the full inset.
+    /// </param>
+    public static void RasterizeShell(HeightfieldBuilder hf, ReadOnlySpan<Vector3> verts, ReadOnlySpan<int> indices, SpanFlags baseFlags, float inset = 0f)
     {
         var emit = new ShellEmitter { Hf = hf };
         for (int t = 0; t + 2 < indices.Length; t += 3)
         {
             var a = verts[indices[t]]; var b = verts[indices[t + 1]]; var c = verts[indices[t + 2]];
             emit.Flags = baseFlags | (IsWalkable(a, b, c) ? SpanFlags.WalkableTop : SpanFlags.None);
-            ForEachCell(hf.CellSize, a, b, c, ref emit);
+            ForEachCell(hf.CellSize, inset, keepThinPlanes: true, a, b, c, ref emit);
         }
     }
 
@@ -59,14 +66,14 @@ public static class TriangleRasterizer
     /// A closed convex volume: each cell column is filled from the lowest to the highest point of
     /// all triangles of this call. WalkableTop comes from the triangle(s) that set the top.
     /// </summary>
-    public static void RasterizeSolid(HeightfieldBuilder hf, ReadOnlySpan<Vector3> verts, ReadOnlySpan<int> indices, SpanFlags baseFlags)
+    public static void RasterizeSolid(HeightfieldBuilder hf, ReadOnlySpan<Vector3> verts, ReadOnlySpan<int> indices, SpanFlags baseFlags, float inset = 0f)
     {
         var emit = new SolidEmitter { Cells = new Dictionary<long, (float min, float max, bool walk)>() };
         for (int t = 0; t + 2 < indices.Length; t += 3)
         {
             var a = verts[indices[t]]; var b = verts[indices[t + 1]]; var c = verts[indices[t + 2]];
             emit.Walk = IsWalkable(a, b, c);
-            ForEachCell(hf.CellSize, a, b, c, ref emit);
+            ForEachCell(hf.CellSize, inset, keepThinPlanes: false, a, b, c, ref emit);
         }
 
         foreach (var kv in emit.Cells)
@@ -95,7 +102,7 @@ public static class TriangleRasterizer
     /// Calls <paramref name="emit"/> once per cell the triangle overlaps, with its y range there.
     /// Generic over a struct emitter so the hot loop has no delegate/closure allocation.
     /// </summary>
-    private static void ForEachCell<TEmit>(float cs, Vector3 a, Vector3 b, Vector3 c, ref TEmit emit) where TEmit : struct, ICellEmitter
+    private static void ForEachCell<TEmit>(float cs, float inset, bool keepThinPlanes, Vector3 a, Vector3 b, Vector3 c, ref TEmit emit) where TEmit : struct, ICellEmitter
     {
         // A NaN/Inf vertex would make the cell range overflow into an endless loop: skip the triangle.
         if (!IsFinite(a) || !IsFinite(b) || !IsFinite(c)) return;
@@ -114,7 +121,8 @@ public static class TriangleRasterizer
 
         for (int cz = z0; cz <= z1; cz++)
         {
-            int rowCount = ClipSlab(tri, row, tmp, axis: 2, cz * cs, (cz + 1) * cs);
+            float insZ = keepThinPlanes && maxZ - minZ < 1e-5f ? 0f : inset; // thin shell plane ⟂ z: conservative in z
+            int rowCount = ClipSlab(tri, row, tmp, axis: 2, cz * cs + insZ, (cz + 1) * cs - insZ);
             if (rowCount == 0) continue;
 
             float minX = float.MaxValue, maxX = float.MinValue;
@@ -123,7 +131,8 @@ public static class TriangleRasterizer
 
             for (int cx = x0; cx <= x1; cx++)
             {
-                int n = ClipSlab(row[..rowCount], cell, tmp, axis: 0, cx * cs, (cx + 1) * cs);
+                float insX = keepThinPlanes && maxX - minX < 1e-5f ? 0f : inset; // likewise ⟂ x
+                int n = ClipSlab(row[..rowCount], cell, tmp, axis: 0, cx * cs + insX, (cx + 1) * cs - insX);
                 if (n == 0) continue;
                 float lo = float.MaxValue, hi = float.MinValue;
                 for (int i = 0; i < n; i++) { lo = MathF.Min(lo, cell[i].Y); hi = MathF.Max(hi, cell[i].Y); }

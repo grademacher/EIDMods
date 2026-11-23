@@ -182,8 +182,8 @@ internal sealed class MapBaker : IDisposable
             if (world.Length < m.LocalVerts.Length) world = new NVec[m.LocalVerts.Length];
             for (int v = 0; v < m.LocalVerts.Length; v++) world[v] = NVec.Transform(m.LocalVerts[v], m.LocalToWorld);
             var verts = new ReadOnlySpan<NVec>(world, 0, m.LocalVerts.Length);
-            if (m.Solid) TriangleRasterizer.RasterizeSolid(b, verts, m.Indices, m.Flags);
-            else TriangleRasterizer.RasterizeShell(b, verts, m.Indices, m.Flags);
+            if (m.Solid) TriangleRasterizer.RasterizeSolid(b, verts, m.Indices, m.Flags, ClassifierBands.CellInset);
+            else TriangleRasterizer.RasterizeShell(b, verts, m.Indices, m.Flags, ClassifierBands.CellInset);
         }
 
         var boxVerts = new List<NVec>(8);
@@ -195,7 +195,7 @@ internal sealed class MapBaker : IDisposable
             boxVerts.Clear();
             boxIdx.Clear();
             BoxTriangles.Append(boxVerts, boxIdx, l2w, center, size);
-            TriangleRasterizer.RasterizeSolid(b, boxVerts.ToArray(), boxIdx.ToArray(), flags);
+            TriangleRasterizer.RasterizeSolid(b, boxVerts.ToArray(), boxIdx.ToArray(), flags, ClassifierBands.CellInset);
         }
 
         foreach (var (cx, cz, bottom, top, flags) in g.DirectSpans) b.AddSpan(cx, cz, bottom, top, flags);

@@ -43,27 +43,6 @@ internal static class MapPalette
     }
 }
 
-/// <summary>
-/// The height cells are classified against: follows the player's feet, but only once they've
-/// climbed/dropped more than 1 m (classifying against the raw feet height made borderline cells
-/// flip between wall and floor as the player's height bobbed while walking).
-/// </summary>
-internal sealed class ReferenceHeight
-{
-    private const float Hysteresis = 1.0f;
-    public float Value { get; private set; } = float.NaN;
-
-    /// <summary>Returns true when the reference moved (new floor).</summary>
-    public bool Update(float feetY)
-    {
-        if (!float.IsNaN(Value) && Mathf.Abs(feetY - Value) <= Hysteresis) return false;
-        Value = feetY;
-        return true;
-    }
-
-    public void Reset() => Value = float.NaN;
-}
-
 /// <summary>Which cells the player has been near this visit (survives re-bakes of the same level).</summary>
 internal sealed class RevealMask
 {
@@ -169,6 +148,11 @@ internal sealed class BakedMapView
         return _getChunk != null && !float.IsNaN(_getChunk.DisplayRefY) ? _getChunk.Display[Local(cx, cz)] : default;
     }
 
+    /// <summary>Max height difference between neighbouring cells you can still walk (stair rise incl. diagonals).</summary>
+    private const float MaxClimb = 0.6f;
+    private readonly CellKind[] _winKind = new CellKind[96 * 96];
+    private readonly float[] _winDy = new float[96 * 96];
+
     private long _getKey = long.MinValue;
     private ViewChunk _getChunk;
 
@@ -176,20 +160,27 @@ internal sealed class BakedMapView
     /// The live physics overlay classified this cell (against the same reference height); if it
     /// disagrees with the bake, it wins until the reference changes.
     /// </summary>
-    public void OverrideFromOverlay(int cx, int cz, CellKind kind, float dy)
+    public void OverrideFromOverlay(int cx, int cz, CellKind kind, float dy, bool liveConservativelyOpen)
     {
+        // Compare with what the BAKE says (the chunk may already hold an override). The overlay only
+        // wins on blocked-vs-open (OverlayPolicy); physics "StepUp" on a solid wall is an artifact.
         long cellKey = Key(cx, cz);
-        if (!_chunks.TryGetValue(Key(cx >> 5, cz >> 5), out var c) || c.KindRefY != _refY)
+        var baked = _classifier.Classify(cx, cz, _refY, out float bakedDy);
+        bool want = OverlayPolicy.ShouldOverride(baked, kind, liveConservativelyOpen);
+        bool had = _overrides.TryGetValue(cellKey, out var old);
+        if (!want && !had) return;
+        if (want && had && old.kind == kind) return;
+
+        if (want) _overrides[cellKey] = (kind, dy);
+        else _overrides.Remove(cellKey); // agrees with the bake again (e.g. door closed): restore it
+
+        if (_chunks.TryGetValue(Key(cx >> 5, cz >> 5), out var c) && c.KindRefY == _refY)
         {
-            _overrides[cellKey] = (kind, dy);
-            return;
+            int i = Local(cx, cz);
+            c.Kind[i] = want ? kind : baked;
+            c.Dy[i] = want ? dy : bakedDy;
+            MarkDisplayDirtyAround(cx, cz);
         }
-        int i = Local(cx, cz);
-        if (c.Kind[i] == kind && Math.Abs(c.Dy[i] - dy) < 0.25f) { _overrides.Remove(cellKey); return; }
-        _overrides[cellKey] = (kind, dy);
-        c.Kind[i] = kind;
-        c.Dy[i] = dy;
-        MarkDisplayDirtyAround(cx, cz);
     }
 
     /// <summary>Builds/refreshes chunks around the player, nearest first, within the time budget.</summary>
@@ -220,19 +211,35 @@ internal sealed class BakedMapView
         for (int dx = -1; dx <= 1; dx++)
             if ((dx != 0 || dz != 0) && EnsureKinds(chx + dx, chz + dz, sw, budgetMs) == null) return false;
 
+        // 96×96 window = this chunk + its 8 neighbours, so reachability (stairs) and despeckle both
+        // see across chunk borders.
+        const int W = 96;
+        for (int wz = 0; wz < 3; wz++)
+        for (int wx = 0; wx < 3; wx++)
+        {
+            var src = _chunks[Key(chx + wx - 1, chz + wz - 1)];
+            for (int lz = 0; lz < 32; lz++)
+            {
+                Array.Copy(src.Kind, lz << 5, _winKind, (wz * 32 + lz) * W + wx * 32, 32);
+                Array.Copy(src.Dy, lz << 5, _winDy, (wz * 32 + lz) * W + wx * 32, 32);
+            }
+        }
+        // StepUp only where you can actually walk up (stairs/ramps from a floor); a railing's or
+        // table's raised top becomes an obstacle.
+        StepReachability.Resolve(_winKind, _winDy, W, W, MaxClimb);
+
         Span<CellKind> n8 = stackalloc CellKind[8];
-        int baseX = chx << 5, baseZ = chz << 5;
         for (int lz = 0; lz < 32; lz++)
         for (int lx = 0; lx < 32; lx++)
         {
-            int i = (lz << 5) | lx, cx = baseX + lx, cz = baseZ + lz, n = 0;
+            int wi = (lz + 32) * W + lx + 32, n = 0;
             for (int dz = -1; dz <= 1; dz++)
             for (int dx = -1; dx <= 1; dx++)
-                if (dx != 0 || dz != 0) n8[n++] = KindAt(cx + dx, cz + dz);
+                if (dx != 0 || dz != 0) n8[n++] = _winKind[wi + dz * W + dx];
 
-            var kind = c.Kind[i];
+            var kind = _winKind[wi];
             var shown = Despeckle.Filter(kind, n8);
-            c.Display[i] = shown == kind ? MapPalette.ColorFor(kind, c.Dy[i]) : MapPalette.ColorFor(shown, 0f);
+            c.Display[(lz << 5) | lx] = shown == kind ? MapPalette.ColorFor(kind, _winDy[wi]) : MapPalette.ColorFor(shown, 0f);
         }
         c.DisplayRefY = _refY;
         c.DisplayDirty = false;
@@ -258,9 +265,6 @@ internal sealed class BakedMapView
         c.KindRefY = _refY;
         return c;
     }
-
-    private CellKind KindAt(int cx, int cz) =>
-        _chunks.TryGetValue(Key(cx >> 5, cz >> 5), out var c) && c.KindRefY == _refY ? c.Kind[Local(cx, cz)] : CellKind.Unknown;
 
     private void MarkDisplayDirtyAround(int cx, int cz)
     {

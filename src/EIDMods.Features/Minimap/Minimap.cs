@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using EIDMods.Features.MapBake;
+using EIDMods.MapCore;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Mirror;
 using UnityEngine;
@@ -112,6 +113,10 @@ internal sealed class MinimapFeature : IDisposable
 
         if (_view != null)
         {
+            // F5: colliders + baked/live cells around the player ("why is X missing from the map").
+            if (Input.GetKeyDown(KeyCode.F5))
+                Diagnostics.NearbyDump.Run(feet, _ref.Value, _baker.Heightfield, _baker.Terrain, cell);
+
             // F6: compare baked vs physics classification on random cells around the player.
             if (Input.GetKeyDown(KeyCode.F6))
                 Diagnostics.BakeParity.Run(feet, _ref.Value, _baker.Heightfield, _baker.Terrain, cell);

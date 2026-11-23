@@ -19,7 +19,7 @@ public sealed record CacheHeader(int FormatVersion, string MapKey, float CellSiz
 /// </summary>
 public static class HeightfieldCache
 {
-    public const int CurrentFormat = 1;
+    public const int CurrentFormat = 2; // 2: cells baked with ClassifierBands.CellInset
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("EIDMAP");
     private static readonly byte[] EndMark = Encoding.ASCII.GetBytes("END");
 

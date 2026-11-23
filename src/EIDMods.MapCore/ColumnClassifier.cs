@@ -5,18 +5,26 @@ namespace EIDMods.MapCore;
 /// <summary>Heights (metres, relative to the reference height) used by the cell classification.</summary>
 public static class ClassifierBands
 {
-    /// <summary>Body box: something solid here blocks a standing player.</summary>
-    public const float BodyLow = 0.6f, BodyHigh = 1.6f;
+    /// <summary>
+    /// Body box: something solid here blocks a standing player. Starts at 0.45 (not knee height 0.6)
+    /// so a 1 m railing still blocks it when the reference height lags 0.5 m above the feet.
+    /// </summary>
+    public const float BodyLow = 0.45f, BodyHigh = 1.6f;
     /// <summary>Head box: solid here too makes it a wall rather than an obstacle.</summary>
     public const float HeadLow = 1.7f, HeadHigh = 2.3f;
     /// <summary>The step-up ray starts here and looks down for a walkable top above StepMinTop.</summary>
-    public const float StepRayFrom = 2.6f, StepMinTop = 0.5f;
+    public const float StepRayFrom = 2.6f, StepMinTop = 0.45f;
     /// <summary>The floor ray starts here and looks down this far.</summary>
     public const float FloorRayFrom = 0.6f, FloorRayLength = 10f;
     /// <summary>Floor within ±FlatFloor is drawn flat; below Drop it reads as a lower floor.</summary>
     public const float FlatFloor = 0.5f, Drop = -1.5f;
     /// <summary>Terrain acts as a solid span this deep below its surface.</summary>
     public const float TerrainDepth = 50f;
+    /// <summary>
+    /// Metres trimmed off each cell edge when deciding whether geometry occupies a cell (bake and
+    /// live overlay alike), so door frames grazing a doorway cell don't close it.
+    /// </summary>
+    public const float CellInset = 0.1f;
 }
 
 /// <summary>

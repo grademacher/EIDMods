@@ -122,4 +122,15 @@ public class ColumnClassifierTests
         Assert.Equal(CellKind.Floor, k);
         Assert.InRange(dy, -1.5f - Tol, -1.5f + Tol);
     }
+
+    [Fact]
+    public void Railing_WhenReferenceLagsHalfAMetreAbove_IsStillBlocked()
+    {
+        // Feet on the landing at 0, reference left 0.5 m above (max lag): the 1 m railing's rails
+        // (bottom 0..0.2, posts 0.2..0.8, top rail 0.8..1.0) must still block the body band, as a
+        // step-up candidate (StepReachability then makes it a wall).
+        var k = Column((-1.5f, -0.5f, SpanFlags.WalkableTop), (-0.5f, 0.5f, SpanFlags.WalkableTop)).Classify(0, 0, 0f, out var dy);
+        Assert.Equal(CellKind.StepUp, k);
+        Assert.InRange(dy, 0.5f - Tol, 0.5f + Tol);
+    }
 }
