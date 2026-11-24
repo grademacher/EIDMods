@@ -18,11 +18,29 @@ public static class MarkerStamp
 
         if (p.OnRim)
         {
-            DrawArrow(pixels, texSize, p.Px, p.Py, p.RimAngleDeg, color, alpha);
+            DrawArrow(pixels, texSize, p.Px, p.Py, p.RimAngleDeg, color, alpha, kind == MarkerKind.Quest ? 1.4f : 1f);
             return;
         }
 
         int r = MarkerPalette.Radius(kind);
+        if (kind == MarkerKind.Quest)
+        {
+            DrawDiamond(pixels, texSize, p, r, color, alpha);
+            return;
+        }
+        if (kind == MarkerKind.EnemyQuestTarget)
+        {
+            // Red dot, a dark gap, then a 1 px cyan ring: "this one counts for your quest".
+            for (int dy = -r - 2; dy <= r + 2; dy++)
+            for (int dx = -r - 2; dx <= r + 2; dx++)
+            {
+                int d2 = dx * dx + dy * dy;
+                if (d2 <= r * r) Blend(pixels, texSize, p.Px + dx, p.Py + dy, color, alpha);
+                else if (d2 <= (r + 1) * (r + 1)) Blend(pixels, texSize, p.Px + dx, p.Py + dy, MarkerPalette.Outline, alpha);
+                else if (d2 <= (r + 2) * (r + 2)) Blend(pixels, texSize, p.Px + dx, p.Py + dy, MarkerPalette.Quest, alpha);
+            }
+            return;
+        }
         int outer = r >= 2 ? r + 1 : r;
         for (int dy = -outer; dy <= outer; dy++)
         for (int dx = -outer; dx <= outer; dx++)
@@ -33,20 +51,44 @@ public static class MarkerStamp
         }
     }
 
-    private static void DrawArrow(Span<Rgba> pixels, int texSize, int cx, int cy, float angleDeg, Rgba color, float alpha)
+    /// <summary>Filled diamond with a 1 px outline, plus a short tick above or below when the place is on another floor.</summary>
+    private static void DrawDiamond(Span<Rgba> pixels, int texSize, in ProjectedMarker p, int r, Rgba color, float alpha)
+    {
+        for (int dy = -r - 1; dy <= r + 1; dy++)
+        for (int dx = -r - 1; dx <= r + 1; dx++)
+        {
+            int d = Math.Abs(dx) + Math.Abs(dy);
+            if (d <= r) Blend(pixels, texSize, p.Px + dx, p.Py + dy, color, alpha);
+            else if (d == r + 1) Blend(pixels, texSize, p.Px + dx, p.Py + dy, MarkerPalette.Outline, alpha);
+        }
+        if (p.Vertical == 0) return;
+        int dir = p.Vertical > 0 ? 1 : -1;
+        for (int t = r + 2; t <= r + 3; t++)
+        for (int dx = -1; dx <= 1; dx++)
+            Blend(pixels, texSize, p.Px + dx, p.Py + dir * t, color, alpha);
+    }
+
+    private static void DrawArrow(Span<Rgba> pixels, int texSize, int cx, int cy, float angleDeg, Rgba color, float alpha, float size)
     {
         float a = angleDeg * (MathF.PI / 180f);
         float dirX = MathF.Sin(a), dirY = MathF.Cos(a);   // 0 = up (+y), 90 = right (+x)
         float perpX = dirY, perpY = -dirX;
-        // Triangle: tip 3 px ahead, base 2 px behind and 2.5 px to each side.
-        float tx = cx + dirX * 3f, ty = cy + dirY * 3f;
-        float bx = cx - dirX * 2f, by = cy - dirY * 2f;
-        float ax = bx + perpX * 2.5f, ay = by + perpY * 2.5f;
-        float cx2 = bx - perpX * 2.5f, cy2 = by - perpY * 2.5f;
+        // Triangle: tip 3 px ahead, base 2 px behind and 2.5 px to each side, inside a triangle 1.5 px
+        // larger in the outline colour (so it reads on light walls as well as dark floors).
+        for (int y = cy - 7; y <= cy + 7; y++)
+        for (int x = cx - 7; x <= cx + 7; x++)
+        {
+            if (InArrow(x, y, cx, cy, dirX, dirY, perpX, perpY, size, 0f)) Blend(pixels, texSize, x, y, color, alpha);
+            else if (InArrow(x, y, cx, cy, dirX, dirY, perpX, perpY, size, 1.5f)) Blend(pixels, texSize, x, y, MarkerPalette.Outline, alpha);
+        }
+    }
 
-        for (int y = cy - 4; y <= cy + 4; y++)
-        for (int x = cx - 4; x <= cx + 4; x++)
-            if (InTriangle(x, y, tx, ty, ax, ay, cx2, cy2)) Blend(pixels, texSize, x, y, color, alpha);
+    private static bool InArrow(float x, float y, float cx, float cy, float dirX, float dirY, float perpX, float perpY, float size, float grow)
+    {
+        float tip = 3f * size + grow, back = 2f * size + grow * 0.5f, side = 2.5f * size + grow;
+        float tx = cx + dirX * tip, ty = cy + dirY * tip;
+        float bx = cx - dirX * back, by = cy - dirY * back;
+        return InTriangle(x, y, tx, ty, bx + perpX * side, by + perpY * side, bx - perpX * side, by - perpY * side);
     }
 
     private static bool InTriangle(float px, float py, float x1, float y1, float x2, float y2, float x3, float y3)

@@ -129,4 +129,35 @@ public class MarkerProjectorTests
         Assert.Equal(1, MarkerPalette.Radius(MarkerKind.FloorItem));
         Assert.True(MarkerPalette.For(MarkerKind.ContainerOpened).A < 255);
     }
+
+    [Fact]
+    public void Quest_ShowsOnAnyFloor_WithVerticalHint()
+    {
+        var proj = At(refY: 0f, hide: true);
+        Assert.True(proj.TryProject(new MapMarker(100f, 8f, 55f, MarkerKind.Quest), false, out var above));
+        Assert.Equal(1f, above.Alpha);
+        Assert.Equal(1, above.Vertical);
+
+        Assert.True(proj.TryProject(new MapMarker(100f, -8f, 55f, MarkerKind.Quest), false, out var below));
+        Assert.Equal(-1, below.Vertical);
+
+        Assert.True(proj.TryProject(new MapMarker(100f, 1f, 55f, MarkerKind.Quest), false, out var level));
+        Assert.Equal(0, level.Vertical);
+    }
+
+    [Fact]
+    public void QuestEnemy_FollowsEnemyFloorRules()
+    {
+        Assert.False(At(refY: 0f, hide: true).TryProject(new MapMarker(100f, 8f, 55f, MarkerKind.EnemyQuestTarget), false, out _));
+        Assert.True(At(refY: 0f, hide: false).TryProject(new MapMarker(100f, 8f, 55f, MarkerKind.EnemyQuestTarget), false, out var p));
+        Assert.True(p.Alpha < 1f);
+    }
+
+    [Fact]
+    public void LabelTravelsWithMarker()
+    {
+        var m = new MapMarker(1f, 2f, 3f, MarkerKind.Quest, "Enter the Atrium");
+        Assert.Equal("Enter the Atrium", m.Label);
+        Assert.Null(new MapMarker(1f, 2f, 3f, MarkerKind.Enemy).Label);
+    }
 }

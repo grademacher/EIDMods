@@ -42,12 +42,18 @@ public sealed class MarkerProjector
         p = default;
         float alpha = 1f;
         float dyFloor = MathF.Abs(m.Y - _refY);
+        sbyte vertical = 0;
         switch (m.Kind)
         {
             case MarkerKind.Teammate:
             case MarkerKind.TeammateDowned:
                 break; // always visible, any floor or distance (user, 2026-11-23)
+            case MarkerKind.Quest:
+                // Quest places matter on any floor; a tick shows whether to go up or down.
+                if (dyFloor > _floorBand) vertical = (sbyte)(m.Y > _refY ? 1 : -1);
+                break;
             case MarkerKind.Enemy:
+            case MarkerKind.EnemyQuestTarget:
                 if (dyFloor > _floorBand)
                 {
                     if (_hideOtherFloors) return false;
@@ -77,7 +83,7 @@ public sealed class MarkerProjector
         }
 
         float angle = MathF.Atan2(u, v) * (180f / MathF.PI); // 0 = up, clockwise
-        p = new ProjectedMarker((int)MathF.Floor(_half + u), (int)MathF.Floor(_half + v), onRim, angle, alpha);
+        p = new ProjectedMarker((int)MathF.Floor(_half + u), (int)MathF.Floor(_half + v), onRim, angle, alpha, vertical);
         return true;
     }
 }

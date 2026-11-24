@@ -16,6 +16,7 @@ internal sealed class MarkerConfig
     public readonly ConfigEntry<bool> ShowCorpseLoot;
     public readonly ConfigEntry<bool> ShowFloorItems;
     public readonly ConfigEntry<bool> ShowOpenedLoot;
+    public readonly ConfigEntry<bool> ShowQuests;
     public readonly ConfigEntry<string> OtherFloorMarkers;
 
     public MarkerConfig(ConfigFile cfg)
@@ -33,6 +34,7 @@ internal sealed class MarkerConfig
         ShowCorpseLoot = cfg.Bind(s, "ShowCorpseLoot", true, "Lootable bodies: yellow dots while lootable.");
         ShowFloorItems = cfg.Bind(s, "ShowFloorItems", true, "Single items lying on the ground: small yellow dots.");
         ShowOpenedLoot = cfg.Bind(s, "ShowOpenedLoot", false, "Keep opened containers on the map (faded) instead of hiding them.");
+        ShowQuests = cfg.Bind(s, "ShowQuests", true, "Active quest places: cyan diamonds (arrows at the edge when far away). Enemies a quest asks you to kill get a cyan ring.");
         OtherFloorMarkers = cfg.Bind(s, "OtherFloorMarkers", "fade",
             new ConfigDescription("Enemies more than 3 m above/below you: fade or hide. (Teammates always show; loot on other floors is always hidden.)", new AcceptableValueList<string>("fade", "hide")));
     }

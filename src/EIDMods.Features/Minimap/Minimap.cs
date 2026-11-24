@@ -52,7 +52,7 @@ internal sealed class MinimapFeature : IDisposable
     private readonly MarkerConfig _markerCfg;
     private readonly List<IMarkerProvider> _providers = new();
     private readonly List<MapMarker> _markers = new();
-    private readonly bool[] _providerFailed = new bool[3];
+    private bool[] _providerFailed = Array.Empty<bool>();
 
     /// <summary>
     /// Runs one provider call; an exception disables only that provider (logged once) until the next
@@ -81,9 +81,12 @@ internal sealed class MinimapFeature : IDisposable
         _cfg = cfg;
         _baker = baker;
         _markerCfg = markerCfg;
+        var questTargets = new QuestTargets();
         _providers.Add(new LootMarkers(markerCfg, IsExplored));
-        _providers.Add(new EnemyMarkers(markerCfg));
+        _providers.Add(new QuestMarkers(markerCfg, questTargets));
+        _providers.Add(new EnemyMarkers(markerCfg, questTargets));
         _providers.Add(new PlayerMarkers(markerCfg));
+        _providerFailed = new bool[_providers.Count];
     }
 
     public void Update()
@@ -260,8 +263,9 @@ internal sealed class MinimapFeature : IDisposable
         var span = MemoryMarshal.Cast<Color32, Rgba>(_pixels.AsSpan());
         foreach (var m in _markers)
         {
-            bool teammate = m.Kind is MarkerKind.Teammate or MarkerKind.TeammateDowned;
-            if (proj.TryProject(m, clampToRim: teammate, out var pm)) MarkerStamp.Draw(span, TexSize, pm, m.Kind);
+            // Teammates and quest places stay on the map as rim arrows when far away.
+            bool clamp = m.Kind is MarkerKind.Teammate or MarkerKind.TeammateDowned or MarkerKind.Quest;
+            if (proj.TryProject(m, clampToRim: clamp, out var pm)) MarkerStamp.Draw(span, TexSize, pm, m.Kind);
         }
         _tMarkers.Stop();
     }

@@ -23,15 +23,21 @@ internal sealed class EnemyMarkers : IMarkerProvider
         public bool Visible = true;
         public float NextLos;
         public int Seen;
+        public bool QuestTarget;
     }
 
     private readonly MarkerConfig _cfg;
+    private readonly QuestTargets _quests;
     private readonly Dictionary<IntPtr, Track> _tracks = new();
     private readonly List<IntPtr> _gone = new();
     private float _nextSample;
     private int _sampleId;
 
-    public EnemyMarkers(MarkerConfig cfg) => _cfg = cfg;
+    public EnemyMarkers(MarkerConfig cfg, QuestTargets quests)
+    {
+        _cfg = cfg;
+        _quests = quests;
+    }
 
     public void Update(float now, Vector3 playerPos)
     {
@@ -65,6 +71,8 @@ internal sealed class EnemyMarkers : IMarkerProvider
                 _tracks[pawn.Pointer] = t;
             }
             else t.Prev = t.Cur;
+            // Re-checked each sample: cheap, and follows quests being accepted or finished.
+            t.QuestTarget = _quests.KillTemplates.Count > 0 && _quests.KillTemplates.Contains(pawn.Template?.Pointer ?? IntPtr.Zero);
             t.Cur = pos;
             t.CurTime = now;
             t.Seen = _sampleId;
@@ -92,7 +100,7 @@ internal sealed class EnemyMarkers : IMarkerProvider
             float k = Math.Clamp((now - t.CurTime) / SampleInterval, 0f, 1f);
             // Draw one sample behind, moving from Prev to Cur over the sample interval.
             var p = t.Prev + (t.Cur - t.Prev) * k;
-            into.Add(new MapMarker(p.x, p.y, p.z, MarkerKind.Enemy));
+            into.Add(new MapMarker(p.x, p.y, p.z, t.QuestTarget ? MarkerKind.EnemyQuestTarget : MarkerKind.Enemy));
         }
     }
 
