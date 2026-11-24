@@ -48,7 +48,7 @@ internal class MinimapConfig
         // NOTE: config entry types must come from outside the hot-reloaded features DLL. An enum
         // declared here is a new type on every reload, while BepInEx keeps the first binding, so
         // the second Bind throws InvalidCastException.
-        RevealFullMap = cfg.Bind("Minimap.Bake", "RevealFullMap", false, "false: only show where you've been. true: show the whole baked level.");
+        RevealFullMap = cfg.Bind("Minimap.Bake", "RevealFullMap", true, "true: show the whole baked level. false: only show where you've been.");
         RevealRadius = cfg.Bind("Minimap.Bake", "RevealRadius", 25f, "Metres around the player that count as explored.");
     }
 }

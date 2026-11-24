@@ -108,8 +108,8 @@ as a snapshot around you. Plan and evidence: `.project-memory/research/2026-11-2
   - The result is despeckled and colored lazily per 32×32 chunk, nearest first, within a 2 ms budget. On a floor
     change, the old image stays up until the new one is built.
   - Terrain is sampled live (`Terrain.SampleHeight`).
-- **Reveal:** by default only cells within `RevealRadius` (25 m) of where you've been are shown. Set
-  `RevealFullMap = true` to show the whole level.
+- **Reveal:** by default the whole baked level is shown (`RevealFullMap = true`). Set it to `false` to show only
+  cells within `RevealRadius` (25 m) of where you've been.
 - **Cell occupancy inset:** a cell counts as occupied only if geometry reaches its inner part, at least 0.1 m in from
   each edge (`ClassifierBands.CellInset`). The bake and the overlay both use this rule, so a door frame that only
   grazes a doorway cell no longer closes it. Thin single planes in non-convex meshes keep the conservative rule.
