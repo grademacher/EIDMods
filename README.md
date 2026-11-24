@@ -239,6 +239,18 @@ Still to look at:
 - **Teammates.** Show the other players as markers (`AG.Actors.Player.Players` lists them).
 - **Persisting explored areas** per level across visits.
 
+## Spells: instant incantations
+
+`src/EIDMods.Features/Spells/InstantIncantations.cs`, setting `[Spells] InstantIncantations` (default on).
+- **Problem (F2 timing probe, 2026-11-24):** with a staff, the game ignores a magic direction press while the
+  previous incantation's hand animation plays (`ConduitCombatState.isWaitingForAnimationToComplete`,
+  ~0.6–0.9 s each). Only 3 of 9 presses counted; a 3-input combo took about 2 s.
+- **Fix:** a Harmony prefix clears that flag before `OnMagicUp/Right/Down/Left`, so every press counts at once
+  and the hand animation restarts. A 3-input combo now takes about 0.5 s.
+- **Unchanged:** the cast after Attack (`CastSpellState`, ~1.0–1.2 s from Enter to `OnActivate`), and other
+  players' casting.
+- **F2** toggles the timing probe: log-only Harmony hooks writing a millisecond timeline (`[Cast]` lines).
+
 ## Reverse-engineering workflow
 
 - Interop DLLs (`BepInEx\interop\Assembly-CSharp.dll`) in **ILSpy/dnSpy** show all class, field and method names.
