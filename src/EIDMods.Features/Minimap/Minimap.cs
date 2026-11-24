@@ -192,7 +192,7 @@ internal sealed class MinimapFeature : IDisposable
                 if (!_providerFailed[i]) Guard(i, "Update", () => _providers[i].Update(now, feet));
             _tMarkers.Stop();
         }
-        _bigMap.Update(feet, _ref.Value, _baker, _reveal, _cfg.RevealFullMap.Value, cell);
+        _bigMap.Update(feet, _ref.Value, _baker, _reveal, _cfg.RevealFullMap.Value, cell, _view);
         _perf.Stop();
     }
 

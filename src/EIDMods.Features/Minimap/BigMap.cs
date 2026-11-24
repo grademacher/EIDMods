@@ -15,7 +15,8 @@ namespace EIDMods.Features.Minimap;
 /// The pop-out map: a large north-up panel in the middle of the screen that you can drag (left mouse),
 /// zoom (wheel, +/-), recentre (C / middle mouse) and look at another height (PageUp/PageDown jump
 /// between floors, a slider beside the panel moves smoothly, Home follows you again). Uses its own
-/// BakedMapView (its own chunk cache at its own height), so the corner minimap is untouched.
+/// BakedMapView (its own chunk cache at its own height), so the corner minimap is untouched; while it
+/// follows your height it copies the minimap's live door/destruction corrections.
 ///
 /// While open, the cursor is freed, the game's own input switch (AG.Core.Keybinds.IsBlocked) is held on
 /// so clicks don't swing a weapon, and the camera's look sensitivity is held at 0 so dragging doesn't
@@ -48,7 +49,7 @@ internal sealed class BigMap : IDisposable
     private Texture2D _tex, _white;
     private readonly Color32[] _pixels = new Color32[TexSize * TexSize];
     private Il2CppStructArray<Color32> _nativePixels;
-    private float _nextRedraw;
+    private float _nextRedraw, _nextOverrideCopy;
     private bool _dirty;
 
     private bool _dragging, _sliderDragging;
@@ -139,7 +140,7 @@ internal sealed class BigMap : IDisposable
     }
 
     /// <summary>Input and map building. Call every frame while open.</summary>
-    public void Update(Vector3 feet, float refY, MapBaker baker, RevealMask reveal, bool showAll, float cell)
+    public void Update(Vector3 feet, float refY, MapBaker baker, RevealMask reveal, bool showAll, float cell, BakedMapView minimapView)
     {
         if (!IsOpen) return;
         if (Input.GetKeyDown(KeyCode.Escape)) { Close(); return; }
@@ -167,6 +168,13 @@ internal sealed class BigMap : IDisposable
         _view.Reveal = reveal;
         _view.ShowAll = showAll;
         _view.SetReference(_effectiveHeight);
+        // Doors opened/closed near you: while following your height, take the minimap's live overlay
+        // corrections (same reference height, so they mean the same thing). A few cells, twice a second.
+        if (_follow && minimapView != null && Time.unscaledTime >= _nextOverrideCopy)
+        {
+            _nextOverrideCopy = Time.unscaledTime + 0.5f;
+            if (_view.CopyOverridesFrom(minimapView)) _dirty = true;
+        }
         // Radius × √2 covers the square's corners.
         _view.Update(new Vector3(_cam.CenterX, 0f, _cam.CenterZ), _cam.Radius * 1.42f, BudgetMs);
     }
@@ -222,8 +230,12 @@ internal sealed class BigMap : IDisposable
         if (step != 0)
         {
             float from = _follow ? refY : _height;
-            _height = _floors.Count > 0 ? FloorLevels.Step(_floors, from, step) : from + step * 3f;
-            _follow = false;
+            // Your own height is a stop too, so PageUp comes back after PageDown even in open areas
+            // with no floor detected at your level (the Moor, 2026-11-23).
+            float to = FloorLevels.Step(_floors, from, step, refY);
+            _height = MathF.Abs(to - from) > 0.01f ? to : from + step * 3f; // nothing further: 3 m steps
+            _height = Math.Clamp(_height, refY - FloorVerticalRange, refY + FloorVerticalRange);
+            _follow = MathF.Abs(_height - refY) < 0.01f; // back at your own height: follow you again
             _dirty = true;
         }
 
@@ -302,7 +314,12 @@ internal sealed class BigMap : IDisposable
                 if (!proj.TryProject(m, clamp, out var pm)) continue;
                 MarkerStamp.Draw(span, TexSize, pm, m.Kind);
                 if (m.Label != null && !pm.OnRim)
-                    _labels.Add((new Vector2(_panel.x + (pm.Px + 7) * size / TexSize, _panel.yMax - (pm.Py + 7) * size / TexSize), m.Label));
+                {
+                    // The tick above/below a quest diamond means "on another floor"; say how far in words too.
+                    float dy = m.Y - _effectiveHeight;
+                    string text = pm.Vertical == 0 ? m.Label : $"{m.Label}  ({MathF.Abs(dy):F0} m {(dy > 0 ? "above" : "below")})";
+                    _labels.Add((new Vector2(_panel.x + (pm.Px + 7) * size / TexSize, _panel.yMax - (pm.Py + 7) * size / TexSize), text));
+                }
             }
         }
         DrawPlayer(feet, facingDeg, cx, cz, mpp);

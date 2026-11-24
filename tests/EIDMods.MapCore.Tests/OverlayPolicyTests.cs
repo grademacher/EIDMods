@@ -9,7 +9,6 @@ public class OverlayPolicyTests
     // Door opened / wall destroyed since the bake: the live view is open where the bake is blocked.
     [InlineData(CellKind.Wall, CellKind.Floor)]
     [InlineData(CellKind.Obstacle, CellKind.Floor)]
-    [InlineData(CellKind.Wall, CellKind.Void)]
     // Door closed / prop placed since the bake: the live view is blocked where the bake is open.
     [InlineData(CellKind.Floor, CellKind.Wall)]
     [InlineData(CellKind.Floor, CellKind.Obstacle)]
@@ -55,5 +54,17 @@ public class OverlayPolicyTests
     {
         Assert.False(OverlayPolicy.ShouldOverride(CellKind.Wall, CellKind.Unknown, true));
         Assert.False(OverlayPolicy.ShouldOverride(CellKind.Unknown, CellKind.Floor, true));
+    }
+
+    [Theory]
+    [InlineData(CellKind.Wall)]
+    [InlineData(CellKind.Obstacle)]
+    [InlineData(CellKind.StepUp)]
+    public void BlockedToVoid_NeverOverrides(CellKind baked)
+    {
+        // Physics sees terrain as a thin surface, so a cell inside the earth behind a sewer wall reads
+        // "clear, no floor" (Void) while the bake knows it's rock (Moor, 2026-11-23). An opened door or
+        // destroyed wall always has floor beneath it, so only a floor can open a blocked cell.
+        Assert.False(OverlayPolicy.ShouldOverride(baked, CellKind.Void, liveConservativelyOpen: true));
     }
 }

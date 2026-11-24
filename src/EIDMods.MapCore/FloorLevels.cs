@@ -61,6 +61,17 @@ public static class FloorLevels
     }
 
     /// <summary>
+    /// Like <see cref="Step(IReadOnlyList{float}, float, int)"/>, with one more stop (your own height), so
+    /// stepping down to a floor and back up returns to you even when no floor is detected at your height.
+    /// </summary>
+    public static float Step(IReadOnlyList<float> floors, float height, int dir, float extraStop)
+    {
+        var stops = new List<float>(floors) { extraStop };
+        stops.Sort();
+        return Step(stops, height, dir);
+    }
+
+    /// <summary>
     /// The floor above (dir &gt; 0) or below (dir &lt; 0) the given height, at least 0.5 m away; the top or
     /// bottom floor itself when there is none further. Returns the height unchanged if there are no floors.
     /// </summary>

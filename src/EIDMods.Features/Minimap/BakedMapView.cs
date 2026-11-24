@@ -183,6 +183,48 @@ internal sealed class BakedMapView
         }
     }
 
+    /// <summary>
+    /// Takes another view's live overlay corrections (the big map following your height takes the
+    /// minimap's), only when both are at the same reference height. True if anything changed.
+    /// </summary>
+    public bool CopyOverridesFrom(BakedMapView other)
+    {
+        if (other == null || other._refY != _refY || float.IsNaN(_refY)) return false;
+        bool changed = false;
+        foreach (var kv in other._overrides)
+        {
+            if (_overrides.TryGetValue(kv.Key, out var mine) && mine == kv.Value) continue;
+            _overrides[kv.Key] = kv.Value;
+            Apply(kv.Key, kv.Value.kind, kv.Value.dy);
+            changed = true;
+        }
+        _removed.Clear();
+        foreach (var k in _overrides.Keys) if (!other._overrides.ContainsKey(k)) _removed.Add(k);
+        foreach (var k in _removed)
+        {
+            _overrides.Remove(k);
+            int cx = (int)(k >> 32), cz = (int)(uint)k;
+            var kind = _classifier.Classify(cx, cz, _refY, out float dy);
+            Apply(k, kind, dy);
+            changed = true;
+        }
+        return changed;
+    }
+
+    private readonly List<long> _removed = new();
+
+    private void Apply(long cellKey, CellKind kind, float dy)
+    {
+        int cx = (int)(cellKey >> 32), cz = (int)(uint)cellKey;
+        if (_chunks.TryGetValue(Key(cx >> 5, cz >> 5), out var c) && c.KindRefY == _refY)
+        {
+            int i = Local(cx, cz);
+            c.Kind[i] = kind;
+            c.Dy[i] = dy;
+            MarkDisplayDirtyAround(cx, cz);
+        }
+    }
+
     /// <summary>Builds/refreshes chunks around the player, nearest first, within the time budget.</summary>
     public void Update(Vector3 player, float viewRadius, float budgetMs)
     {

@@ -123,6 +123,8 @@ as a snapshot around you. Plan and evidence: `.project-memory/research/2026-11-2
 - **Live overlay:** the physics scanner keeps running within 10 m of you (20 cells/frame, 2 s refresh). It overrides
   the bake **only when they disagree on blocked vs open** (`OverlayPolicy`):
   - A door opening or a wall being destroyed only counts once a full-cell check is completely clear.
+  - Only a found **floor** opens a blocked cell. Physics sees terrain as a thin surface, so earth behind a sewer wall
+    reads "clear, no floor" (void); letting that win drew a black disc around you in the Moor's sewers.
   - Disagreements about *which kind* of blocked are ignored. Physics reports "step up" on real walls when its ray
     starts inside one, and letting that win made catacomb walls vanish in sections as your height changed on slopes.
 - **Before the first bake of a level finishes,** the physics scanner draws the whole map, with a
@@ -170,12 +172,14 @@ rotate and clip with it. Plan: `.project-memory/research/2026-11-23-minimap-mark
 panel; **Esc** or **M** closes it, and the corner minimap is hidden meanwhile.
 - **Controls:** drag with the left mouse to move, wheel or **= / -** to zoom (5–300 m), **C** or middle click to
   recentre on you.
-- **Elevation:** **PageUp/PageDown** jump between floors, the slider beside the panel moves smoothly (it snaps within
+- **Elevation:** **PageUp/PageDown** jump between floors (your own height counts as a stop, so PageUp undoes
+  PageDown; with nothing further they move 3 m, within 30 m of you), the slider beside the panel moves smoothly (it snaps within
   0.4 m of a floor), **Home** follows you again. Floors are the busiest walkable heights within 120 m of you (at least
   2.5 m apart, recomputed after you move 60 m), kept within 30 m above/below you.
 - **Data:** its own `BakedMapView` at the chosen height (the minimap's cache is untouched); it follows
   `RevealFullMap` like the minimap. Redraws at 10 Hz, or immediately while you pan, zoom or change height. No cost
-  while closed. The live door overlay only applies to the minimap.
+  while closed. While it follows your height it copies the minimap's live door/destruction corrections twice a
+  second; at another height it shows the bake only. Quest labels say how far above/below a place on another floor is.
 - **Input while open (local only):** the cursor is freed, `AG.Core.Keybinds.IsBlocked` is held on (no attacks), and
   the camera's look sensitivity is held at 0 (the game's block doesn't cover mouse look). All are restored on close,
   with the camera held for 3 more frames because re-locking the cursor reads as a mouse flick.

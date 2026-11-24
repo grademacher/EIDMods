@@ -100,4 +100,14 @@ public class FloorLevelsTests
         Assert.Single(near);
         Assert.InRange(near[0], -0.1f, 0.1f);
     }
+
+    [Fact]
+    public void Step_YourOwnHeightIsAStop_SoPageUpUndoesPageDown()
+    {
+        var floors = new System.Collections.Generic.List<float> { -0.3f };  // the Moor: one floor, below you
+        float you = 2.8f;
+        float down = FloorLevels.Step(floors, you, -1, you);
+        Assert.Equal(-0.3f, down);
+        Assert.Equal(you, FloorLevels.Step(floors, down, +1, you));
+    }
 }
