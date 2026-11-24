@@ -185,4 +185,14 @@ public class MarkerProjectorTests
         Assert.InRange(p.Py, 128 + 10, 128 + 16);
         Assert.InRange(p.RimAngleDeg, 80f, 90f);
     }
+
+    [Fact]
+    public void Extraction_ShowsOnAnyFloor_WithVerticalHint()
+    {
+        var proj = At(refY: 0f, hide: true);
+        Assert.True(proj.TryProject(new MapMarker(100f, -9f, 55f, MarkerKind.Extraction), false, out var p));
+        Assert.Equal(-1, p.Vertical);
+        Assert.True(proj.TryProject(new MapMarker(100f, 9f, 55f, MarkerKind.ExtractionInactive), false, out var q));
+        Assert.Equal(1, q.Vertical);
+    }
 }

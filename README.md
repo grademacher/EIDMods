@@ -147,11 +147,12 @@ rotate and clip with it. Plan: `.project-memory/research/2026-11-23-minimap-mark
 | Corpse loot | small yellow dot | `PawnLootTableContainer` |
 | Floor item | smallest yellow dot | `SingleLootItem` |
 | Quest place | **cyan diamond**, rim arrow when far away, tick above/below when on another floor; text label on the big map | active objectives in your own save (`Stash.History.GetActive()`): `EnterLocation` → `LocationTrigger`, `InteractWithTarget` → `ObjectiveTarget` (same ID), `ExitThrough` → `ExitAreaComponent`/`Exitpoint` |
+| Extraction | **violet square**, faded while an exit area is switched off; tick above/below on another floor; **hidden** (no arrow) when off the minimap, edge arrow on the big map; "Exit: <place>" label on the big map | `ExitAreaComponent` (walk-in zone, `State` on/off) and `Exitpoint` (interact exit, skipped while `IsHidden`), found once per level/scene load, state re-read every second |
 | Quest enemy | red dot with a **cyan ring** (normal enemy distance rules) | pawns whose `Template` a `KillEnemy` objective asks for |
 
 - **Settings:** `[Minimap.Markers]` holds `ShowPlayers`, `ShowEnemies`, `EnemyMode` (`near` within `EnemyRadius` 25 m
   through walls / `lineOfSight` / `all` / `off`), `ShowContainers`, `ShowCorpseLoot`, `ShowFloorItems`,
-  `ShowOpenedLoot`, `ShowQuests` and `OtherFloorMarkers` (`fade`/`hide`, for enemies more than 3 m above or below you). **F3**
+  `ShowOpenedLoot`, `ShowQuests`, `ShowExtraction` and `OtherFloorMarkers` (`fade`/`hide`, for enemies more than 3 m above or below you). **F3**
   toggles all markers.
 - **Floors and distance:**
   - **Teammates** always show, on any floor and at any distance, with arrows at the rim.

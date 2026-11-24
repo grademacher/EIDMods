@@ -50,7 +50,9 @@ public sealed class MarkerProjector
             case MarkerKind.TeammateDowned:
                 break; // always visible, any floor or distance (user, 2026-11-23)
             case MarkerKind.Quest:
-                // Quest places matter on any floor; a tick shows whether to go up or down.
+            case MarkerKind.Extraction:
+            case MarkerKind.ExtractionInactive:
+                // Quest and extraction places matter on any floor; a tick shows whether to go up or down.
                 if (dyFloor > _floorBand) vertical = (sbyte)(m.Y > _refY ? 1 : -1);
                 break;
             case MarkerKind.Enemy:

@@ -310,7 +310,8 @@ internal sealed class BigMap : IDisposable
                 hideOtherFloors: _markerCfg.OtherFloorMarkers.Value == "hide", square: true);
             foreach (var m in markers)
             {
-                bool clamp = m.Kind is MarkerKind.Teammate or MarkerKind.TeammateDowned or MarkerKind.Quest;
+                bool clamp = m.Kind is MarkerKind.Teammate or MarkerKind.TeammateDowned or MarkerKind.Quest
+                    or MarkerKind.Extraction or MarkerKind.ExtractionInactive;
                 if (!proj.TryProject(m, clamp, out var pm)) continue;
                 MarkerStamp.Draw(span, TexSize, pm, m.Kind);
                 if (m.Label != null && !pm.OnRim)

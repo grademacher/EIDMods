@@ -25,7 +25,12 @@ public static class MarkerStamp
         int r = MarkerPalette.Radius(kind);
         if (kind == MarkerKind.Quest)
         {
-            DrawDiamond(pixels, texSize, p, r, color, alpha);
+            DrawPlace(pixels, texSize, p, r, color, alpha, square: false);
+            return;
+        }
+        if (kind is MarkerKind.Extraction or MarkerKind.ExtractionInactive)
+        {
+            DrawPlace(pixels, texSize, p, r, color, alpha, square: true);
             return;
         }
         if (kind == MarkerKind.EnemyQuestTarget)
@@ -51,13 +56,16 @@ public static class MarkerStamp
         }
     }
 
-    /// <summary>Filled diamond with a 1 px outline, plus a short tick above or below when the place is on another floor.</summary>
-    private static void DrawDiamond(Span<Rgba> pixels, int texSize, in ProjectedMarker p, int r, Rgba color, float alpha)
+    /// <summary>
+    /// A place: filled diamond (quests) or square (extraction) with a 1 px outline, plus a short tick above
+    /// or below when it is on another floor.
+    /// </summary>
+    private static void DrawPlace(Span<Rgba> pixels, int texSize, in ProjectedMarker p, int r, Rgba color, float alpha, bool square)
     {
         for (int dy = -r - 1; dy <= r + 1; dy++)
         for (int dx = -r - 1; dx <= r + 1; dx++)
         {
-            int d = Math.Abs(dx) + Math.Abs(dy);
+            int d = square ? Math.Max(Math.Abs(dx), Math.Abs(dy)) : Math.Abs(dx) + Math.Abs(dy);
             if (d <= r) Blend(pixels, texSize, p.Px + dx, p.Py + dy, color, alpha);
             else if (d == r + 1) Blend(pixels, texSize, p.Px + dx, p.Py + dy, MarkerPalette.Outline, alpha);
         }

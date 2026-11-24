@@ -150,4 +150,33 @@ public class MarkerStampTests
         Assert.Equal(MarkerPalette.Quest, At(px, 16, 20));   // reaches where a teammate arrow has only outline
         Assert.Equal(MarkerPalette.Outline, At(px, 16, 21));
     }
+
+    [Fact]
+    public void Extraction_IsVioletSquare_WithOutline()
+    {
+        var px = Canvas();
+        MarkerStamp.Draw(px, Tex, Centre(), MarkerKind.Extraction);
+        Assert.Equal(MarkerPalette.Extraction, At(px, 16, 16));
+        Assert.Equal(MarkerPalette.Extraction, At(px, 19, 19));  // square corner (a dot or diamond wouldn't reach)
+        Assert.Equal(MarkerPalette.Outline, At(px, 20, 20));
+        Assert.Equal(Bg, At(px, 22, 16));
+    }
+
+    [Fact]
+    public void ExtractionInactive_IsFaded()
+    {
+        var px = Canvas();
+        MarkerStamp.Draw(px, Tex, Centre(), MarkerKind.ExtractionInactive);
+        var c = At(px, 16, 16);
+        Assert.NotEqual(MarkerPalette.Extraction, c);
+        Assert.True(c.B > 60 && c.B < MarkerPalette.Extraction.B); // blended toward the background
+    }
+
+    [Fact]
+    public void Extraction_OnAnotherFloor_GetsTick()
+    {
+        var px = Canvas();
+        MarkerStamp.Draw(px, Tex, new ProjectedMarker(16, 16, false, 0f, 1f, Vertical: 1), MarkerKind.Extraction);
+        Assert.Equal(MarkerPalette.Extraction, At(px, 16, 22)); // tick above the square
+    }
 }

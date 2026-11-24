@@ -49,7 +49,7 @@ internal sealed class MinimapFeature : IDisposable
     private int _perfLoggedBaked, _perfLoggedScan;
     private readonly Stopwatch _tView = new(), _tOverlay = new(), _tUpload = new(), _tMarkers = new();
 
-    // Markers: drawn in this order (later on top): loot, enemies, teammates.
+    // Markers: drawn in this order (later on top): loot, extraction, quests, enemies, teammates.
     private readonly MarkerConfig _markerCfg;
     private readonly List<IMarkerProvider> _providers = new();
     private readonly List<MapMarker> _markers = new();
@@ -85,6 +85,7 @@ internal sealed class MinimapFeature : IDisposable
         _bigMap = new BigMap(cfg, markerCfg);
         var questTargets = new QuestTargets();
         _providers.Add(new LootMarkers(markerCfg, IsExplored));
+        _providers.Add(new ExtractionMarkers(markerCfg));
         _providers.Add(new QuestMarkers(markerCfg, questTargets));
         _providers.Add(new EnemyMarkers(markerCfg, questTargets));
         _providers.Add(new PlayerMarkers(markerCfg));
@@ -269,7 +270,7 @@ internal sealed class MinimapFeature : IDisposable
         return _reveal.IsRevealed((int)MathF.Floor(x / cell), (int)MathF.Floor(z / cell));
     }
 
-    /// <summary>This frame's markers from every provider, in draw order (loot, quests, enemies, teammates).</summary>
+    /// <summary>This frame's markers from every provider, in draw order (loot, extraction, quests, enemies, teammates).</summary>
     private void CollectMarkers()
     {
         _markers.Clear();
@@ -291,7 +292,8 @@ internal sealed class MinimapFeature : IDisposable
         var span = MemoryMarshal.Cast<Color32, Rgba>(_pixels.AsSpan());
         foreach (var m in _markers)
         {
-            // Teammates and quest places stay on the map as rim arrows when far away.
+            // Teammates and quest places stay on the map as rim arrows when far away; extraction points
+            // are simply hidden when off the minimap (user, 2026-11-24).
             bool clamp = m.Kind is MarkerKind.Teammate or MarkerKind.TeammateDowned or MarkerKind.Quest;
             if (proj.TryProject(m, clampToRim: clamp, out var pm)) MarkerStamp.Draw(span, TexSize, pm, m.Kind);
         }

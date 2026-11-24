@@ -1,6 +1,6 @@
 namespace EIDMods.MapCore.Markers;
 
-public enum MarkerKind : byte { Teammate, TeammateDowned, Enemy, Container, ContainerOpened, CorpseLoot, FloorItem, Quest, EnemyQuestTarget }
+public enum MarkerKind : byte { Teammate, TeammateDowned, Enemy, Container, ContainerOpened, CorpseLoot, FloorItem, Quest, EnemyQuestTarget, Extraction, ExtractionInactive }
 
 /// <summary>RGBA, 4 bytes in the same layout as UnityEngine.Color32 (the game side reinterprets its buffer).</summary>
 public readonly record struct Rgba(byte R, byte G, byte B, byte A);
@@ -20,7 +20,8 @@ public readonly record struct ProjectedMarker(int Px, int Py, bool OnRim, float 
 /// <summary>
 /// The agreed look (user, 2026-11-23): every marker is a dot. Teammates are green (orange when downed),
 /// enemies are red, and loot/containers are smaller yellow dots. Quest places are cyan diamonds, and
-/// enemies a quest asks you to kill get a cyan ring.
+/// enemies a quest asks you to kill get a cyan ring. Extraction points are violet squares (faded while an
+/// exit area is switched off).
 /// </summary>
 public static class MarkerPalette
 {
@@ -30,6 +31,8 @@ public static class MarkerPalette
     public static readonly Rgba Loot = new(240, 205, 60, 255);
     public static readonly Rgba LootOpened = new(240, 205, 60, 102); // 40 %
     public static readonly Rgba Quest = new(70, 215, 235, 255);
+    public static readonly Rgba Extraction = new(180, 110, 255, 255);
+    public static readonly Rgba ExtractionInactive = new(180, 110, 255, 102); // 40 %
     public static readonly Rgba Outline = new(10, 10, 10, 255);
 
     public static Rgba For(MarkerKind k) => k switch
@@ -38,6 +41,8 @@ public static class MarkerPalette
         MarkerKind.TeammateDowned => TeammateDowned,
         MarkerKind.Enemy or MarkerKind.EnemyQuestTarget => Enemy,
         MarkerKind.Quest => Quest,
+        MarkerKind.Extraction => Extraction,
+        MarkerKind.ExtractionInactive => ExtractionInactive,
         MarkerKind.ContainerOpened => LootOpened,
         _ => Loot,
     };
@@ -45,6 +50,7 @@ public static class MarkerPalette
     public static int Radius(MarkerKind k) => k switch
     {
         MarkerKind.Quest => 4,
+        MarkerKind.Extraction or MarkerKind.ExtractionInactive => 3,
         MarkerKind.Teammate or MarkerKind.TeammateDowned or MarkerKind.Enemy or MarkerKind.EnemyQuestTarget => 3,
         MarkerKind.FloorItem => 1,
         _ => 2,
