@@ -7,6 +7,7 @@ internal class MinimapConfig
 {
     public readonly ConfigEntry<bool> Enabled;
     public readonly ConfigEntry<KeyCode> ToggleKey;
+    public readonly ConfigEntry<KeyCode> BigMapKey;
     public readonly ConfigEntry<KeyCode> ZoomInKey;
     public readonly ConfigEntry<KeyCode> ZoomOutKey;
     public readonly ConfigEntry<int> SizePx;
@@ -23,7 +24,15 @@ internal class MinimapConfig
     public MinimapConfig(ConfigFile cfg)
     {
         Enabled = cfg.Bind("Minimap", "Enabled", true, "Show the minimap.");
-        ToggleKey = cfg.Bind("Minimap", "ToggleKey", KeyCode.M, "Key that shows/hides the minimap.");
+        ToggleKey = cfg.Bind("Minimap", "ToggleKey", KeyCode.N, "Key that shows/hides the corner minimap.");
+        BigMapKey = cfg.Bind("Minimap", "BigMapKey", KeyCode.M, "Key that opens/closes the big map (Escape also closes it).");
+        // One-time move of the minimap toggle from M to N, now that M opens the big map (user, 2026-11-23).
+        var migrated = cfg.Bind("Minimap", "KeysMigrated", false, "Internal: the minimap toggle was moved from M to N.");
+        if (!migrated.Value)
+        {
+            if (ToggleKey.Value == KeyCode.M) ToggleKey.Value = KeyCode.N;
+            migrated.Value = true;
+        }
         ZoomInKey = cfg.Bind("Minimap", "ZoomInKey", KeyCode.Equals, "Zoom the minimap in.");
         ZoomOutKey = cfg.Bind("Minimap", "ZoomOutKey", KeyCode.Minus, "Zoom the minimap out.");
         SizePx = cfg.Bind("Minimap", "SizePx", 256, "On-screen size of the minimap in pixels.");

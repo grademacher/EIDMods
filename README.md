@@ -41,7 +41,7 @@ Unity 6000.3 with metadata v39 is very new to the modding tools:
 3. Build: `dotnet build EIDMods.sln -c Release`. This deploys the loader to `BepInEx\plugins\EIDMods\` and the
    features to `BepInEx\EIDMods\` (see "Hot reload" below). If your game path differs, create
    `Directory.Build.props.user` with a `<GamePath>` override.
-4. In game: **M** toggles the map, **= / -** zoom. Settings are in `BepInEx\config\eidmods.core.cfg`.
+4. In game: **N** toggles the corner minimap, **M** opens the big map (Esc closes it), **= / -** zoom. Settings are in `BepInEx\config\eidmods.core.cfg`.
 
 Because this is co-op over Mirror, keep mods **client-side and read-only** where possible. Only the host is
 authoritative, so anything that changes game state would need every player to run the mod.
@@ -117,6 +117,9 @@ as a snapshot around you. Plan and evidence: `.project-memory/research/2026-11-2
   through neighbor steps of at most 0.6 m (`MapCore.StepReachability`). That covers stairs, ramps and rising ground.
   Raised tops you can't walk onto, like a railing's 1 m top rail, a table or a crate, are barriers and draw as
   **walls**. Low clutter with no flat top (barrels, debris) stays a dim obstacle.
+- **Under the ground:** terrain counts as solid rock 50 m deep (so cliffs are walls), except in a column with a built
+  walkable floor near your height more than 2 m below the terrain surface: a tunnel (the Moor's sewers), where the
+  terrain is a ceiling.
 - **Live overlay:** the physics scanner keeps running within 10 m of you (20 cells/frame, 2 s refresh). It overrides
   the bake **only when they disagree on blocked vs open** (`OverlayPolicy`):
   - A door opening or a wall being destroyed only counts once a full-cell check is completely clear.
@@ -141,10 +144,12 @@ rotate and clip with it. Plan: `.project-memory/research/2026-11-23-minimap-mark
 | Container | small yellow dot, **hidden once opened** | `LootTableContainer` (`hasBeenOpened`), `LootContainer` |
 | Corpse loot | small yellow dot | `PawnLootTableContainer` |
 | Floor item | smallest yellow dot | `SingleLootItem` |
+| Quest place | **cyan diamond**, rim arrow when far away, tick above/below when on another floor; text label on the big map | active objectives in your own save (`Stash.History.GetActive()`): `EnterLocation` → `LocationTrigger`, `InteractWithTarget` → `ObjectiveTarget` (same ID), `ExitThrough` → `ExitAreaComponent`/`Exitpoint` |
+| Quest enemy | red dot with a **cyan ring** (normal enemy distance rules) | pawns whose `Template` a `KillEnemy` objective asks for |
 
 - **Settings:** `[Minimap.Markers]` holds `ShowPlayers`, `ShowEnemies`, `EnemyMode` (`near` within `EnemyRadius` 25 m
   through walls / `lineOfSight` / `all` / `off`), `ShowContainers`, `ShowCorpseLoot`, `ShowFloorItems`,
-  `ShowOpenedLoot` and `OtherFloorMarkers` (`fade`/`hide`, for enemies more than 3 m above or below you). **F3**
+  `ShowOpenedLoot`, `ShowQuests` and `OtherFloorMarkers` (`fade`/`hide`, for enemies more than 3 m above or below you). **F3**
   toggles all markers.
 - **Floors and distance:**
   - **Teammates** always show, on any floor and at any distance, with arrows at the rim.
@@ -156,7 +161,24 @@ rotate and clip with it. Plan: `.project-memory/research/2026-11-23-minimap-mark
   once per level and when new scenes load, one type per frame. Corpse loot and floor items are re-scanned 1 s after a
   nearby enemy dies. Opened or picked-up state is checked about 60 objects per frame.
 - **Cost:** about 0.2 ms/frame with 18 loot dots on screen in Catacomb Ruins.
-- **F4** dumps what the providers see.
+- **Quests:** objectives are re-read every 2 s; their places are looked up (one `FindObjectsByType` per frame) only
+  when the set of place objectives changes or scenes load. Item objectives (collect, hand over, craft) have no place.
+  Objectives whose `MapRequirements` don't include the current map are skipped.
+- **F4** dumps what the providers see, including active quests and their objectives.
+
+**Big map** (`Minimap/BigMap.cs`, `MapCore/BigMapCamera.cs`, `MapCore/FloorLevels.cs`). **M** opens a large north-up
+panel; **Esc** or **M** closes it, and the corner minimap is hidden meanwhile.
+- **Controls:** drag with the left mouse to move, wheel or **= / -** to zoom (5–300 m), **C** or middle click to
+  recentre on you.
+- **Elevation:** **PageUp/PageDown** jump between floors, the slider beside the panel moves smoothly (it snaps within
+  0.4 m of a floor), **Home** follows you again. Floors are the busiest walkable heights within 120 m of you (at least
+  2.5 m apart, recomputed after you move 60 m), kept within 30 m above/below you.
+- **Data:** its own `BakedMapView` at the chosen height (the minimap's cache is untouched); it follows
+  `RevealFullMap` like the minimap. Redraws at 10 Hz, or immediately while you pan, zoom or change height. No cost
+  while closed. The live door overlay only applies to the minimap.
+- **Input while open (local only):** the cursor is freed, `AG.Core.Keybinds.IsBlocked` is held on (no attacks), and
+  the camera's look sensitivity is held at 0 (the game's block doesn't cover mouse look). All are restored on close,
+  with the camera held for 3 more frames because re-locking the cursor reads as a mouse flick.
 
 **v2: physics scanner** (`src/EIDMods.Features/Minimap/MapGrid.cs`). It is now the pre-bake fallback and the live
 overlay, and its rules are the classification rules for both:

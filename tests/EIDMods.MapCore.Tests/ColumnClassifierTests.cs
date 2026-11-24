@@ -133,4 +133,21 @@ public class ColumnClassifierTests
         Assert.Equal(CellKind.StepUp, k);
         Assert.InRange(dy, 0.5f - Tol, 0.5f + Tol);
     }
+
+    [Fact]
+    public void TunnelUnderTerrain_FloorNearYou_IsFloor()
+    {
+        // Sewer under the Moor: ground surface 8 m up, a built floor at your feet.
+        var k = Column(new FixedTerrain(8f), (-0.5f, 0f, SpanFlags.WalkableTop)).Classify(0, 0, 0f, out var dy);
+        Assert.Equal(CellKind.Floor, k);
+        Assert.InRange(dy, -Tol, Tol);
+    }
+
+    [Fact]
+    public void UnderTerrain_NoFloorNearYou_IsStillRock()
+    {
+        Assert.Equal(CellKind.Wall, Column(new FixedTerrain(8f)).Classify(0, 0, 0f, out _));
+        // A floor far below you (another tunnel) doesn't open this cell either.
+        Assert.Equal(CellKind.Wall, Column(new FixedTerrain(8f), (-6.5f, -6f, SpanFlags.WalkableTop)).Classify(0, 0, 0f, out _));
+    }
 }

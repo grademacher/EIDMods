@@ -5,7 +5,7 @@ namespace EIDMods.MapCore.Markers;
 /// <summary>
 /// World position to minimap pixel, with the same math the minimap composes with: the map is
 /// centred on the player, "up" is the camera's forward (sin yaw, cos yaw) and texture row 0 is the
-/// bottom. Compose maps a pixel offset (u, v) to world as wx = x + cos·u + sin·v and
+/// bottom (yaw 0 and square bounds for the north-up big map). Compose maps a pixel offset (u, v) to world as wx = x + cos·u + sin·v and
 /// wz = z − sin·u + cos·v, so this inverts that rotation.
 /// </summary>
 public sealed class MarkerProjector
@@ -19,11 +19,12 @@ public sealed class MarkerProjector
     public const float LootFloorBand = 2.5f;
 
     private readonly float _half, _pxPerMetre, _px, _pz, _sin, _cos, _refY, _floorBand;
-    private readonly bool _hideOtherFloors;
+    private readonly bool _hideOtherFloors, _square;
 
     public MarkerProjector(int texSize, float viewRadius, float playerX, float playerZ, float yawDeg, float refY,
-        float floorBand = 3f, bool hideOtherFloors = false)
+        float floorBand = 3f, bool hideOtherFloors = false, bool square = false)
     {
+        _square = square;
         _half = texSize * 0.5f;
         _pxPerMetre = _half / viewRadius;
         _px = playerX;
@@ -69,9 +70,12 @@ public sealed class MarkerProjector
         float dx = m.X - _px, dz = m.Z - _pz;
         float u = (_cos * dx - _sin * dz) * _pxPerMetre;
         float v = (_sin * dx + _cos * dz) * _pxPerMetre;
-        float dist = MathF.Sqrt(u * u + v * v);
+        // Round map: distance from the centre. Square (big) map: the larger of |u|, |v|, so clamping
+        // slides markers onto the nearest edge rather than a circle.
+        float dist = _square ? MathF.Max(MathF.Abs(u), MathF.Abs(v)) : MathF.Sqrt(u * u + v * v);
         if (!float.IsFinite(dist)) return false;
 
+        float angle = MathF.Atan2(u, v) * (180f / MathF.PI); // 0 = up, clockwise
         bool onRim = false;
         if (dist > _half - OnMapLimit)
         {
@@ -82,7 +86,6 @@ public sealed class MarkerProjector
             onRim = true;
         }
 
-        float angle = MathF.Atan2(u, v) * (180f / MathF.PI); // 0 = up, clockwise
         p = new ProjectedMarker((int)MathF.Floor(_half + u), (int)MathF.Floor(_half + v), onRim, angle, alpha, vertical);
         return true;
     }

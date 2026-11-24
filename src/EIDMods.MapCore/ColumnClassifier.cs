@@ -21,6 +21,11 @@ public static class ClassifierBands
     /// <summary>Terrain acts as a solid span this deep below its surface.</summary>
     public const float TerrainDepth = 50f;
     /// <summary>
+    /// Terrain is ignored in a column with a walkable floor between refY − 2 and refY + 1 that lies more
+    /// than 2 m under the terrain surface (a tunnel under the ground).
+    /// </summary>
+    public const float UnderTerrainFloorBelow = 2f, UnderTerrainFloorAbove = 1f, UnderTerrainCover = 2f;
+    /// <summary>
     /// Metres trimmed off each cell edge when deciding whether geometry occupies a cell (bake and
     /// live overlay alike), so door frames grazing a doorway cell don't close it.
     /// </summary>
@@ -58,7 +63,7 @@ public sealed class ColumnClassifier
         if (_terrain != null)
         {
             float cs = _hf.CellSize;
-            if (_terrain.TrySample((cx + 0.5f) * cs, (cz + 0.5f) * cs, out float t))
+            if (_terrain.TrySample((cx + 0.5f) * cs, (cz + 0.5f) * cs, out float t) && !UnderTerrainFloor(spans, t, refY))
             {
                 hasTerrain = true;
                 terrain = new HeightSpan(t - ClassifierBands.TerrainDepth, t, SpanFlags.WalkableTop);
@@ -115,6 +120,24 @@ public sealed class ColumnClassifier
         if (!found) return CellKind.Void;
         dy = top - refY;
         return CellKind.Floor;
+    }
+
+    /// <summary>
+    /// A built walkable floor near your height, well below the ground surface: a tunnel or cellar (the
+    /// sewers under the Moor, 2026-11-23). The terrain is a ceiling there, not rock, so it's ignored for
+    /// this column. Rock between tunnels has no such floor and stays solid.
+    /// </summary>
+    private static bool UnderTerrainFloor(ReadOnlySpan<HeightSpan> spans, float terrainTop, float refY)
+    {
+        for (int i = 0; i < spans.Length; i++)
+        {
+            var s = spans[i];
+            if ((s.Flags & SpanFlags.WalkableTop) == 0) continue;
+            if (s.Top >= refY - ClassifierBands.UnderTerrainFloorBelow && s.Top <= refY + ClassifierBands.UnderTerrainFloorAbove
+                && s.Top < terrainTop - ClassifierBands.UnderTerrainCover)
+                return true;
+        }
+        return false;
     }
 
     private static bool AnySolidOverlap(ReadOnlySpan<HeightSpan> spans, bool hasTerrain, HeightSpan terrain, float lo, float hi)

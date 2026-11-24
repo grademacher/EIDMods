@@ -33,6 +33,7 @@ internal sealed class MinimapFeature : IDisposable
     private const int OverlayBudget = 20, PerfFrames = 300;
 
     private readonly MinimapConfig _cfg;
+    private readonly BigMap _bigMap;
     private readonly MapBaker _baker;
     private readonly ReferenceHeight _ref = new();
 
@@ -81,6 +82,7 @@ internal sealed class MinimapFeature : IDisposable
         _cfg = cfg;
         _baker = baker;
         _markerCfg = markerCfg;
+        _bigMap = new BigMap(cfg, markerCfg);
         var questTargets = new QuestTargets();
         _providers.Add(new LootMarkers(markerCfg, IsExplored));
         _providers.Add(new QuestMarkers(markerCfg, questTargets));
@@ -91,9 +93,10 @@ internal sealed class MinimapFeature : IDisposable
 
     public void Update()
     {
+        _bigMap.Tick();
         if (Input.GetKeyDown(_cfg.ToggleKey.Value)) _cfg.Enabled.Value = !_cfg.Enabled.Value;
-        if (Input.GetKeyDown(_cfg.ZoomInKey.Value)) _cfg.ViewRadius.Value = Mathf.Max(5f, _cfg.ViewRadius.Value * 0.8f);
-        if (Input.GetKeyDown(_cfg.ZoomOutKey.Value)) _cfg.ViewRadius.Value = Mathf.Min(120f, _cfg.ViewRadius.Value * 1.25f);
+        if (!_bigMap.IsOpen && Input.GetKeyDown(_cfg.ZoomInKey.Value)) _cfg.ViewRadius.Value = Mathf.Max(5f, _cfg.ViewRadius.Value * 0.8f);
+        if (!_bigMap.IsOpen && Input.GetKeyDown(_cfg.ZoomOutKey.Value)) _cfg.ViewRadius.Value = Mathf.Min(120f, _cfg.ViewRadius.Value * 1.25f);
 
         // Re-check once a second: the player object only exists in a level, and is replaced on
         // respawn / level change. A new character means a new level: start a fresh map.
@@ -113,7 +116,14 @@ internal sealed class MinimapFeature : IDisposable
             }
         }
 
-        if (!_cfg.Enabled.Value || _target == null || !_targetIsPlayer) return;
+        if (_target == null || !_targetIsPlayer) { _bigMap.Close(); return; }
+        if (Input.GetKeyDown(_cfg.BigMapKey.Value))
+        {
+            if (_bigMap.IsOpen) _bigMap.Close();
+            else _bigMap.Open(_target.position);
+        }
+        // The big map needs the same data (baked view, explored area, markers) even with the minimap off.
+        if (!_cfg.Enabled.Value && !_bigMap.IsOpen) return;
         _perf.Start();
 
         // F8: log cell classification along 8 directions (live vs. stored), and the frame cost.
@@ -182,12 +192,21 @@ internal sealed class MinimapFeature : IDisposable
                 if (!_providerFailed[i]) Guard(i, "Update", () => _providers[i].Update(now, feet));
             _tMarkers.Stop();
         }
+        _bigMap.Update(feet, _ref.Value, _baker, _reveal, _cfg.RevealFullMap.Value, cell);
         _perf.Stop();
     }
 
     public void LateUpdate()
     {
-        if (!_cfg.Enabled.Value || _grid == null || _target == null || !_targetIsPlayer) return;
+        if (_grid == null || _target == null || !_targetIsPlayer) return;
+        if (_bigMap.IsOpen)
+        {
+            // The corner minimap is hidden while the big map is open.
+            CollectMarkers();
+            _bigMap.Compose(_target.position, _target.eulerAngles.y, _markers);
+            return;
+        }
+        if (!_cfg.Enabled.Value) return;
         _perf.Start();
         Compose();
         _perf.Stop();
@@ -218,6 +237,7 @@ internal sealed class MinimapFeature : IDisposable
 
     public void OnGUI()
     {
+        if (_bigMap.IsOpen) { _bigMap.OnGUI(_ref.Value); return; }
         if (!_cfg.Enabled.Value || _tex == null || _grid == null || !_targetIsPlayer) return;
         if (Event.current.type != EventType.Repaint) return;
 
@@ -232,6 +252,7 @@ internal sealed class MinimapFeature : IDisposable
 
     public void Dispose()
     {
+        _bigMap.Dispose();
         if (_tex != null) Object.Destroy(_tex);
         _tex = null;
         _nativePixels = null;
@@ -248,15 +269,22 @@ internal sealed class MinimapFeature : IDisposable
         return _reveal.IsRevealed((int)MathF.Floor(x / cell), (int)MathF.Floor(z / cell));
     }
 
-    /// <summary>Teammates, enemies and loot as dots on top of the map (under the player's own marker).</summary>
-    private void StampMarkers(Vector3 feet, float radius, float yawDeg)
+    /// <summary>This frame's markers from every provider, in draw order (loot, quests, enemies, teammates).</summary>
+    private void CollectMarkers()
     {
         _markers.Clear();
         if (!_markerCfg.Enabled.Value) return;
-        _tMarkers.Start();
         float now = Time.unscaledTime;
         for (int i = 0; i < _providers.Count; i++)
             if (!_providerFailed[i]) Guard(i, "Collect", () => _providers[i].Collect(now, _markers));
+    }
+
+    /// <summary>Teammates, enemies and loot as dots on top of the map (under the player's own marker).</summary>
+    private void StampMarkers(Vector3 feet, float radius, float yawDeg)
+    {
+        if (!_markerCfg.Enabled.Value) { _markers.Clear(); return; }
+        _tMarkers.Start();
+        CollectMarkers();
 
         var proj = new MarkerProjector(TexSize, radius, feet.x, feet.z, yawDeg, _ref.Value,
             floorBand: 3f, hideOtherFloors: _markerCfg.OtherFloorMarkers.Value == "hide");

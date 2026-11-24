@@ -160,4 +160,29 @@ public class MarkerProjectorTests
         Assert.Equal("Enter the Atrium", m.Label);
         Assert.Null(new MapMarker(1f, 2f, 3f, MarkerKind.Enemy).Label);
     }
+
+    [Fact]
+    public void SquareMap_KeepsCornerMarkers_RoundMapDropsThem()
+    {
+        // 16 m right and 16 m ahead: inside the square, outside the circle (20 m radius).
+        var corner = new MapMarker(116f, 0f, 66f, MarkerKind.Enemy);
+        Assert.False(At().TryProject(corner, false, out _));
+
+        var square = new MarkerProjector(Tex, Radius, 100f, 50f, 0f, 0f, square: true);
+        Assert.True(square.TryProject(corner, false, out var p));
+        Assert.False(p.OnRim);
+        Assert.InRange(p.Px, 128 + 100, 128 + 105);
+    }
+
+    [Fact]
+    public void SquareMap_ClampsToTheEdge_NotACircle()
+    {
+        var square = new MarkerProjector(Tex, Radius, 100f, 50f, 0f, 0f, square: true);
+        // Far to the right and a little ahead: clamped onto the right edge, same height ratio.
+        Assert.True(square.TryProject(new MapMarker(200f, 0f, 60f, MarkerKind.Quest), true, out var p));
+        Assert.True(p.OnRim);
+        Assert.Equal(128 + 128 - 8, p.Px);
+        Assert.InRange(p.Py, 128 + 10, 128 + 16);
+        Assert.InRange(p.RimAngleDeg, 80f, 90f);
+    }
 }
